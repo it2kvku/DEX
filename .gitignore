@@ -26,3 +26,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# playwright — báo cáo/trace sinh ra mỗi lần chạy, không phải nguồn
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+
+# Claude Code local settings
+.claude/settings.local.json

@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RainbowKitProvider, darkTheme } from "@rainbow-me/rainbowkit";
 import { wagmiConfig } from "@/lib/wagmi";
 import { InAppWalletProvider } from "@/features/in-app-wallet/InAppWalletContext";
+import { TxCenterProvider } from "@/features/tx/TxCenter";
 
 import "@rainbow-me/rainbowkit/styles.css";
 
@@ -34,7 +35,12 @@ export function Providers({ children }: { children: ReactNode }) {
           })}
           modalSize="compact"
         >
-          <InAppWalletProvider>{children}</InAppWalletProvider>
+          <InAppWalletProvider>
+            {/* TxCenter nằm ngoài mọi tab để tx đang chờ không mất khi đổi tab.
+                Phải ở trong WagmiProvider + QueryClientProvider vì nó dùng
+                config để lấy client và invalidate query sau khi tx vào block. */}
+            <TxCenterProvider>{children}</TxCenterProvider>
+          </InAppWalletProvider>
         </RainbowKitProvider>
       </QueryClientProvider>
     </WagmiProvider>

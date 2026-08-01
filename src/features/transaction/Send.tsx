@@ -6,13 +6,13 @@ import {
   useChainId,
   useSendTransaction,
   useWriteContract,
-  useWaitForTransactionReceipt,
 } from "wagmi";
 import { isAddress, parseUnits, formatUnits, type Address } from "viem";
 import { erc20Abi } from "@/lib/abi/erc20";
 import { nativeCoingeckoId } from "@/lib/tokens";
 import { useAssets } from "../asset/useBalances";
 import { usePrices } from "../asset/usePrices";
+import { useTxCenter, useTrackedTx } from "../tx/TxCenter";
 import { useGasEstimate } from "./useGasEstimate";
 import { useEnsResolve, looksLikeEns } from "./useEnsResolve";
 import { explorerTxUrl, supportedChains } from "@/lib/chains";
@@ -33,6 +33,7 @@ export function Send() {
   const chainId = useChainId();
   const chain = supportedChains.find((c) => c.id === chainId);
   const { rows, tokens } = useAssets();
+  const { track } = useTxCenter();
 
   // Lựa chọn tài sản gửi: "native" hoặc địa chỉ token.
   const [selected, setSelected] = useState<string>("native");
@@ -86,7 +87,11 @@ export function Send() {
   const sendToken = useWriteContract();
 
   const txHash = sendNative.data ?? sendToken.data;
-  const receipt = useWaitForTransactionReceipt({ hash: txHash });
+  // Trạng thái đọc từ Transaction Center thay vì tự mở
+  // `useWaitForTransactionReceipt`: hash được theo dõi ở tầng provider nên vẫn
+  // vào block đúng dù người dùng rời tab Gửi, và sống sót qua reload.
+  const tracked = useTrackedTx(txHash);
+  const finalized = !!tracked.record && !tracked.isPending;
 
   const nativeSymbol = rows.find((r) => r.kind === "native")?.symbol ?? "";
   const feeNative = gas.data ? Number(formatUnits(gas.data.totalFeeWei, 18)) : 0;
@@ -94,18 +99,35 @@ export function Send() {
 
   const submit = () => {
     if (!selectedAsset) return;
+    /** Đăng ký hash vào tx center ngay khi ví trả về. */
+    const onSuccess = (hash: `0x${string}`) => {
+      if (!address) return;
+      track({
+        hash,
+        chainId,
+        from: address,
+        kind: "send",
+        title: `${amount} ${selectedAsset.symbol} → ${shortenAddress(to)}`,
+      });
+    };
     if (tokenAddress) {
-      sendToken.writeContract({
-        address: tokenAddress,
-        abi: erc20Abi,
-        functionName: "transfer",
-        args: [to as Address, parsedAmount],
-      });
+      sendToken.writeContract(
+        {
+          address: tokenAddress,
+          abi: erc20Abi,
+          functionName: "transfer",
+          args: [to as Address, parsedAmount],
+        },
+        { onSuccess },
+      );
     } else {
-      sendNative.sendTransaction({
-        to: to as Address,
-        value: parsedAmount,
-      });
+      sendNative.sendTransaction(
+        {
+          to: to as Address,
+          value: parsedAmount,
+        },
+        { onSuccess },
+      );
     }
     setStep("result");
   };
@@ -146,19 +168,24 @@ export function Send() {
             <div className="flex items-center gap-2 text-sm text-neutral-400">
               <Spinner /> Đang chờ ký trong ví...
             </div>
-          ) : receipt.isLoading ? (
+          ) : tracked.isPending ? (
             <div className="flex items-center gap-2 text-sm text-neutral-400">
               <Spinner /> Đã gửi. Đang chờ xác nhận trên mạng...
             </div>
-          ) : receipt.data?.status === "success" ? (
+          ) : tracked.isSuccess ? (
             <div className="flex flex-col items-center gap-3 py-4">
               <Checkmark />
               <p className="font-display text-lg font-semibold text-emerald-300">
                 Giao dịch thành công
               </p>
             </div>
-          ) : receipt.data?.status === "reverted" ? (
+          ) : tracked.isReverted ? (
             <Alert variant="error">Giao dịch bị revert trên mạng.</Alert>
+          ) : tracked.isDropped ? (
+            <Alert variant="warning">
+              Chưa xác nhận được giao dịch này. Nó có thể vẫn đang trong mempool
+              — kiểm tra hash bên dưới trên block explorer.
+            </Alert>
           ) : null}
 
           {txHash && (
@@ -180,7 +207,7 @@ export function Send() {
             </div>
           )}
 
-          {(receipt.data || error) && (
+          {(finalized || error) && (
             <Button onClick={reset} className="w-full">
               Gửi giao dịch khác
             </Button>

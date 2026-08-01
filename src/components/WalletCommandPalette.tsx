@@ -16,6 +16,7 @@ import {
   Unplug,
   Coins,
   ArrowLeftRight,
+  ShieldOff,
 } from "lucide-react";
 import { useAccount, useDisconnect, useSwitchChain } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
@@ -32,6 +33,7 @@ export type WalletTab =
   | "receive"
   | "history"
   | "nft"
+  | "approvals"
   | "wallet";
 
 interface PaletteItem {
@@ -52,6 +54,7 @@ const TAB_ITEMS: { tab: WalletTab; label: string; icon: PaletteItem["icon"] }[] 
     { tab: "receive", label: "Nhận (QR)", icon: QrCode },
     { tab: "history", label: "Lịch sử giao dịch", icon: Clock },
     { tab: "nft", label: "NFT", icon: ImageIcon },
+    { tab: "approvals", label: "Quyền chi tiêu (allowance)", icon: ShieldOff },
     { tab: "wallet", label: "Ví in-app", icon: KeyRound },
   ];
 

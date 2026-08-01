@@ -6,24 +6,36 @@ import {
   useChainId,
   useReadContract,
   useSendTransaction,
-  useWaitForTransactionReceipt,
   useWriteContract,
 } from "wagmi";
 import { formatUnits, parseUnits, type Address } from "viem";
-import { ArrowDown, Settings2 } from "lucide-react";
+import {
+  ArrowDown,
+  CheckCircle2,
+  PenLine,
+  Settings2,
+  ShieldAlert,
+} from "lucide-react";
 import { erc20Abi } from "@/lib/abi/erc20";
 import { explorerTxUrl } from "@/lib/chains";
 import { formatUsd } from "@/lib/format";
 import { useAssets } from "@/features/asset/useBalances";
+import { useTxCenter, useTrackedTx } from "@/features/tx/TxCenter";
 import { Alert, Button, Card, Label, Spinner } from "@/components/ui";
 import { Checkmark } from "@/components/anim/Checkmark";
 import { Reveal } from "@/components/anim/Reveal";
 import { useSwapQuote } from "./useSwapQuote";
-import { NATIVE_TOKEN_ADDRESS } from "./lifi";
+import { useSwapSimulation } from "./useSwapSimulation";
+import { usePermit } from "./usePermit";
+import { mapSwapError } from "./errors";
+import { NATIVE_TOKEN_ADDRESS } from "./types";
 import {
   isSwapChainSupported,
   SEPOLIA_CHAIN_ID,
+  withSelfPermit,
 } from "./uniswapSepolia";
+import { RouteView } from "./RouteView";
+import type { RouteToken } from "./routing/path";
 import { TokenSelect, type TokenChoice } from "./TokenSelect";
 
 const SLIPPAGE_PRESETS = [10, 50, 100]; // bps: 0.1% / 0.5% / 1%
@@ -36,7 +48,11 @@ const SLIPPAGE_PRESETS = [10, 50, 100]; // bps: 0.1% / 0.5% / 1%
 export function Swap() {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
-  const { rows, refetch: refetchBalances } = useAssets();
+  const { rows } = useAssets();
+  // Mọi tx gửi từ đây được đăng ký vào Transaction Center: nó lo theo dõi tới
+  // trạng thái cuối, thông báo, và refetch số dư/allowance — kể cả khi component
+  // này đã unmount vì người dùng đổi tab.
+  const { track } = useTxCenter();
 
   // ---- Form state ----
   const [tokenIn, setTokenIn] = useState<TokenChoice | null>("native");
@@ -65,10 +81,23 @@ export function Swap() {
   const decimalsIn = rowIn?.decimals ?? 18;
   const decimalsOut = rowOut?.decimals ?? 18;
 
-  const addrIn: Address | null =
-    tokenIn === "native" ? NATIVE_TOKEN_ADDRESS : (tokenIn as Address | null);
-  const addrOut: Address | null =
-    tokenOut === "native" ? NATIVE_TOKEN_ADDRESS : (tokenOut as Address | null);
+  // Engine routing cần symbol + decimals (không chỉ address) để encode path
+  // và tính mid price, nên gói thành RouteToken.
+  const tokenInInfo: RouteToken | null = rowIn
+    ? {
+        address: tokenIn === "native" ? NATIVE_TOKEN_ADDRESS : (tokenIn as Address),
+        symbol: rowIn.symbol,
+        decimals: rowIn.decimals,
+      }
+    : null;
+  const tokenOutInfo: RouteToken | null = rowOut
+    ? {
+        address:
+          tokenOut === "native" ? NATIVE_TOKEN_ADDRESS : (tokenOut as Address),
+        symbol: rowOut.symbol,
+        decimals: rowOut.decimals,
+      }
+    : null;
 
   // ---- Amount (debounce 450ms để không spam aggregator) ----
   const [debouncedAmount, setDebouncedAmount] = useState("");
@@ -91,8 +120,8 @@ export function Swap() {
   // ---- Quote (1 call trả về đủ: estimate + approvalAddress + calldata) ----
   const quote = useSwapQuote({
     chainId,
-    tokenIn: addrIn,
-    tokenOut: addrOut,
+    tokenIn: tokenInInfo,
+    tokenOut: tokenOutInfo,
     amountInWei,
     fromAddress: address,
     slippageBps,
@@ -103,11 +132,20 @@ export function Swap() {
   const amountOut = q ? BigInt(q.toAmount) : 0n;
   const amountOutMin = q ? BigInt(q.toAmountMin) : 0n;
 
-  // Price impact = chênh lệch giá trị USD vào/ra (khác slippage).
-  const priceImpact = useMemo(() => {
-    if (!q || !q.fromAmountUsd) return 0;
-    return Math.max(0, ((q.fromAmountUsd - q.toAmountUsd) / q.fromAmountUsd) * 100);
-  }, [q]);
+  /**
+   * Price impact = độ lệch giữa giá thực thi và mid price của pool, đã tách
+   * phí LP ra (engine tính từ sqrtPriceX96). Aggregator không cho mid price
+   * nên trả về null — khi đó không bịa số, chỉ ẩn chỉ tiêu này.
+   */
+  const priceImpact = q?.priceImpactPct ?? null;
+  const impactTone =
+    priceImpact === null
+      ? "text-neutral-500"
+      : priceImpact > 5
+        ? "text-rose-400"
+        : priceImpact > 2
+          ? "text-amber-400"
+          : "text-neutral-500";
 
   // ---- Allowance (chỉ với ERC-20 in) ----
   const needAllowanceCheck =
@@ -127,48 +165,159 @@ export function Swap() {
     allowance.data !== undefined &&
     (allowance.data as bigint) < amountInWei;
 
+  /**
+   * Allowance đã chắc chắn đủ chưa. Phân biệt với `!needsApproval`: khi query
+   * allowance còn đang chạy thì cả hai đều false, nhưng simulation vẫn phải
+   * override — nếu không sẽ revert `STF` và báo lỗi giả cho người dùng.
+   */
+  const allowanceSufficient =
+    allowance.data !== undefined && (allowance.data as bigint) >= amountInWei;
+
+  // ---- Permit (ERC-2612): ký chữ ký thay cho một giao dịch approve ----
+  // Điều kiện: token in là ERC-20 có `permit`, ví là EOA thuần (địa chỉ có
+  // bytecode thì `ecrecover` không khớp) và router có `selfPermit` để nhúng
+  // chữ ký vào chính tx swap. Không thoả -> im lặng fallback về approve.
+  const permitToken = tokenIn !== "native" ? (tokenIn as Address) : undefined;
+  const permit = usePermit({
+    chainId,
+    token: permitToken,
+    owner: address,
+    spender: q?.approvalAddress,
+    enabled: !!needsApproval && q?.plan?.supportsSelfPermit === true,
+  });
+  const { signed: signedPermit, reset: resetPermit } = permit;
+
+  /**
+   * Chữ ký gắn chặt với (token, value, deadline). Đổi token hoặc tăng số lượng
+   * là chữ ký cũ vô dụng — không phát hiện thì tx revert sau khi đã trả gas.
+   */
+  const permitStale =
+    !!signedPermit &&
+    (!permitToken ||
+      signedPermit.token.toLowerCase() !== permitToken.toLowerCase() ||
+      signedPermit.value < amountInWei ||
+      signedPermit.deadline <= BigInt(Math.floor(Date.now() / 1000)));
+
+  useEffect(() => {
+    if (permitStale) resetPermit();
+  }, [permitStale, resetPermit]);
+
+  /**
+   * Chữ ký dùng được cho lệnh đang dựng. Ngoài việc chưa stale, quote phải là
+   * của engine nội bộ — chỉ nó dựng lại được multicall có `selfPermit`; quote
+   * từ aggregator thì chữ ký không nhúng vào đâu được.
+   */
+  const permitReady =
+    !!signedPermit && !permitStale && q?.plan?.supportsSelfPermit === true;
+
+  /**
+   * Quote thực sự đem đi ký: khi đã có permit, calldata được dựng lại với
+   * `selfPermit` chèn lên đầu `multicall` — cấp quyền và swap trong CÙNG một
+   * giao dịch. Phần hiển thị vẫn dùng `q` vì hai bên chỉ khác calldata.
+   */
+  const txQuote = useMemo(
+    () => (q && permitReady && signedPermit ? withSelfPermit(q, signedPermit) : q),
+    [q, permitReady, signedPermit],
+  );
+
+  // ---- Preflight simulation: chạy calldata thật bằng eth_call trước khi ký ----
+  // Với ERC-20 chưa approve, simulation override slot allowance để vẫn kiểm tra
+  // được route/thanh khoản mà không cần user trả gas cho approve trước.
+  // Khi đã ký permit thì KHÔNG override: eth_call chạy luôn `token.permit` với
+  // chữ ký thật, nên simulation cũng là bước kiểm tra chữ ký.
+  const simulation = useSwapSimulation({
+    chainId,
+    quote: txQuote,
+    tokenInAddress: tokenInInfo?.address,
+    fromAddress: address,
+    amountInWei,
+    overrideAllowance: !allowanceSufficient && !permitReady,
+    enabled: !succeeded && !insufficientBalance,
+  });
+  const sim = simulation.data;
+  /** Chặn ký khi simulation chứng minh lệnh sẽ revert. */
+  const simulationBlocks = sim?.status === "revert";
+
   // ---- Approve ----
   const approveTx = useWriteContract();
-  const approveReceipt = useWaitForTransactionReceipt({ hash: approveTx.data });
+  const approve = useTrackedTx(approveTx.data);
   useEffect(() => {
-    if (approveReceipt.isSuccess) {
-      allowance.refetch();
+    if (approve.isSuccess) {
+      // Allowance đã đổi -> tx center đã invalidate query, chỉ cần reset hook
+      // để nút quay về trạng thái swap được.
       approveTx.reset();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [approveReceipt.isSuccess]);
+  }, [approve.isSuccess]);
 
   const doApprove = () => {
     if (!q?.approvalAddress || tokenIn === "native" || !tokenIn) return;
     // Approve ĐÚNG số lượng cần swap — không dùng infinite approval
     // (an toàn hơn nếu router gặp sự cố).
-    approveTx.writeContract({
-      address: tokenIn as Address,
-      abi: erc20Abi,
-      functionName: "approve",
-      args: [q.approvalAddress, amountInWei],
-    });
+    approveTx.writeContract(
+      {
+        address: tokenIn as Address,
+        abi: erc20Abi,
+        functionName: "approve",
+        args: [q.approvalAddress, amountInWei],
+      },
+      {
+        onSuccess: (hash) => {
+          if (!address) return;
+          track({
+            hash,
+            chainId,
+            from: address,
+            kind: "approve",
+            title: `Approve ${debouncedAmount} ${rowIn?.symbol ?? ""}`.trim(),
+          });
+        },
+      },
+    );
   };
 
   // ---- Swap: gửi thẳng transactionRequest từ quote ----
   const swapTx = useSendTransaction();
-  const swapReceipt = useWaitForTransactionReceipt({ hash: swapTx.data });
+  const swap = useTrackedTx(swapTx.data);
   useEffect(() => {
-    if (swapReceipt.isSuccess) {
-      setSucceeded(true);
-      refetchBalances();
-    }
+    if (swap.isSuccess) setSucceeded(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [swapReceipt.isSuccess]);
+  }, [swap.isSuccess]);
 
   const doSwap = () => {
-    if (!q) return;
-    swapTx.sendTransaction({
-      to: q.txRequest.to,
-      data: q.txRequest.data,
-      value: q.txRequest.value,
-      gas: q.txRequest.gasLimit ?? undefined,
-    });
+    if (!txQuote || simulationBlocks) return;
+    swapTx.sendTransaction(
+      {
+        to: txQuote.txRequest.to,
+        data: txQuote.txRequest.data,
+        value: txQuote.txRequest.value,
+        gas: txQuote.txRequest.gasLimit ?? undefined,
+      },
+      {
+        onSuccess: (hash) => {
+          if (!address) return;
+          track({
+            hash,
+            chainId,
+            from: address,
+            kind: "swap",
+            title: `${debouncedAmount} ${rowIn?.symbol ?? ""} → ${Number(
+              formatUnits(amountOut, decimalsOut),
+            ).toLocaleString("en-US", { maximumFractionDigits: 6 })} ${
+              rowOut?.symbol ?? ""
+            }`,
+          });
+        },
+      },
+    );
+  };
+
+  /**
+   * Ký permit cho ĐÚNG số lượng cần swap (không phải vô hạn): chữ ký chỉ cấp
+   * quyền một lần cho đúng khối lượng đó, hết deadline là hết hiệu lực.
+   */
+  const doPermit = () => {
+    if (amountInWei > 0n) void permit.sign(amountInWei);
   };
 
   const reverse = () => {
@@ -183,6 +332,8 @@ export function Swap() {
     setAmountIn("");
     setSucceeded(false);
     swapTx.reset();
+    // Chữ ký đã dùng thì nonce của token đã tăng — giữ lại chỉ gây revert.
+    resetPermit();
   };
 
   // ---- Guard: chain không hỗ trợ ----
@@ -230,11 +381,15 @@ export function Swap() {
   }
 
   const errorText =
-    (swapTx.error ? mapError(swapTx.error.message) : "") ||
-    (approveTx.error ? mapError(approveTx.error.message) : "") ||
-    (swapReceipt.isError ? "Giao dịch bị revert trên mạng." : "") ||
+    (swapTx.error ? mapSwapError(swapTx.error.message) : "") ||
+    (approveTx.error ? mapSwapError(approveTx.error.message) : "") ||
+    (permit.error ? mapSwapError(permit.error) : "") ||
+    (swap.isReverted ? "Giao dịch bị revert trên mạng." : "") ||
+    (swap.isDropped
+      ? "Giao dịch chưa được xác nhận — kiểm tra lại trên explorer."
+      : "") ||
     (quote.error && amountInWei > 0n
-      ? mapError((quote.error as Error).message)
+      ? mapSwapError((quote.error as Error).message)
       : "");
 
   return (
@@ -388,24 +543,14 @@ export function Swap() {
           />
         </div>
         {q && q.toAmountUsd > 0 && (
-          <p className="mt-1 flex items-center gap-2 text-xs text-neutral-500">
+          <p className="mt-1 text-xs text-neutral-500">
             ≈ {formatUsd(q.toAmountUsd)}
-            {priceImpact > 0.05 && (
-              <span
-                className={
-                  priceImpact > 5
-                    ? "text-rose-400"
-                    : priceImpact > 2
-                      ? "text-amber-400"
-                      : "text-neutral-500"
-                }
-              >
-                (-{priceImpact.toFixed(2)}%)
-              </span>
-            )}
           </p>
         )}
       </div>
+
+      {/* Route preview: đường đi thật của lệnh */}
+      {q?.route && <RouteView route={q.route} />}
 
       {/* Chi tiết quote */}
       {q && (
@@ -419,6 +564,28 @@ export function Swap() {
               decimalsOut,
             )} ${rowOut?.symbol}`}
           />
+          {q.midRate !== null && (
+            <Row
+              label="Giá giữa (mid)"
+              value={`1 ${rowIn?.symbol} ≈ ${q.midRate.toLocaleString("en-US", {
+                maximumSignificantDigits: 6,
+              })} ${rowOut?.symbol}`}
+            />
+          )}
+          {priceImpact !== null && (
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-neutral-500">Price impact</span>
+              <span className={`font-mono ${impactTone}`}>
+                {priceImpact < 0.01 ? "< 0.01%" : `${priceImpact.toFixed(2)}%`}
+              </span>
+            </div>
+          )}
+          {q.lpFeePct !== null && (
+            <Row
+              label={q.route?.source === "aggregator" ? "Phí DEX" : "Phí LP"}
+              value={`${q.lpFeePct.toFixed(2)}%`}
+            />
+          )}
           <Row
             label="Nhận tối thiểu"
             value={`${Number(
@@ -432,20 +599,27 @@ export function Swap() {
             value={q.gasUsd ? formatUsd(q.gasUsd) : "—"}
           />
           <Row label="Slippage" value={`${(slippageBps / 100).toFixed(2)}%`} />
-          <Row label="Router" value={`LI.FI (qua ${q.tool})`} />
+          <Row
+            label="Nguồn"
+            value={
+              q.route?.source === "uniswap-v3"
+                ? `${q.tool} (engine nội bộ)`
+                : `LI.FI (qua ${q.tool})`
+            }
+          />
         </div>
       )}
 
       {/* Ghi chú Sepolia */}
       {chainId === SEPOLIA_CHAIN_ID && q && (
         <p className="text-center text-xs text-neutral-600">
-          Swap trực tiếp qua pool Uniswap V3 trên Sepolia — thanh khoản testnet
-          mỏng, tỷ giá không phản ánh giá thật.
+          Route do engine tự chấm điểm trên pool Uniswap V3 Sepolia — thanh
+          khoản testnet mỏng, tỷ giá không phản ánh giá thật.
         </p>
       )}
 
       {/* Cảnh báo price impact lớn */}
-      {priceImpact > 5 && (
+      {priceImpact !== null && priceImpact > 5 && (
         <Alert variant="warning">
           Price impact {priceImpact.toFixed(2)}% — lệnh của bạn đẩy giá pool
           đáng kể, có thể nhận về ít hơn nhiều so với giá thị trường.
@@ -453,6 +627,26 @@ export function Swap() {
       )}
 
       {errorText && <Alert variant="error">{errorText}</Alert>}
+
+      {/* Kết quả preflight simulation */}
+      <SimulationNotice
+        state={
+          !q
+            ? "hidden"
+            : simulation.isFetching
+              ? "running"
+              : sim?.status === "revert"
+                ? "revert"
+                : sim?.status === "ok"
+                  ? "ok"
+                  : "hidden"
+        }
+        reason={sim?.reason ?? null}
+        amountOut={sim?.amountOut ?? null}
+        decimalsOut={decimalsOut}
+        symbolOut={rowOut?.symbol ?? ""}
+        usedAllowanceOverride={sim?.usedAllowanceOverride ?? false}
+      />
 
       {/* Nút hành động theo state machine */}
       <SwapButton
@@ -462,21 +656,109 @@ export function Swap() {
         insufficientBalance={insufficientBalance}
         quoting={quote.isLoading}
         hasQuote={!!q}
-        needsApproval={!!needsApproval}
-        approving={approveTx.isPending || approveReceipt.isLoading}
+        simulating={simulation.isFetching}
+        simulationFailed={simulationBlocks}
+        needsApproval={!!needsApproval && !permitReady}
+        permitChecking={!!needsApproval && permit.checking}
+        permitAvailable={permit.available}
+        permitSigning={permit.signing}
+        permitReady={permitReady}
+        approving={approveTx.isPending || approve.isPending}
         signing={swapTx.isPending}
-        pending={swapReceipt.isLoading}
+        pending={swap.isPending}
         symbolIn={rowIn?.symbol ?? ""}
         onApprove={doApprove}
+        onPermit={doPermit}
         onSwap={doSwap}
       />
 
-      {needsApproval && !approveTx.isPending && !approveReceipt.isLoading && (
-        <p className="text-center text-xs text-neutral-600">
-          Approve đúng số lượng cần swap (không phải vô hạn) — an toàn hơn.
+      {permitReady && (
+        <p className="text-center text-xs text-emerald-400/80">
+          Đã có chữ ký permit — swap sẽ gộp cấp quyền và hoán đổi vào 1 giao
+          dịch, không cần tx approve riêng.
         </p>
       )}
+
+      {!!needsApproval &&
+        !permitReady &&
+        !permit.checking &&
+        permit.available &&
+        !permit.signing && (
+          <p className="text-center text-xs text-neutral-600">
+            Token này hỗ trợ ERC-2612: ký một chữ ký (miễn phí) thay vì gửi giao
+            dịch approve.
+          </p>
+        )}
+
+      {!!needsApproval &&
+        !permit.available &&
+        !permit.checking &&
+        !approveTx.isPending &&
+        !approve.isPending && (
+          <p className="text-center text-xs text-neutral-600">
+            Approve đúng số lượng cần swap (không phải vô hạn) — an toàn hơn.
+          </p>
+        )}
     </div>
+  );
+}
+
+/**
+ * Hiển thị kết quả preflight: đây là điểm khác giữa "đoán lệnh sẽ chạy" và
+ * "đã chạy thử lệnh y hệt trên state hiện tại của chain".
+ */
+function SimulationNotice({
+  state,
+  reason,
+  amountOut,
+  decimalsOut,
+  symbolOut,
+  usedAllowanceOverride,
+}: {
+  state: "hidden" | "running" | "ok" | "revert";
+  reason: string | null;
+  amountOut: bigint | null;
+  decimalsOut: number;
+  symbolOut: string;
+  usedAllowanceOverride: boolean;
+}) {
+  if (state === "hidden") return null;
+
+  if (state === "running") {
+    return (
+      <p className="flex items-center justify-center gap-2 text-xs text-neutral-500">
+        <Spinner className="!h-3 !w-3" />
+        Đang mô phỏng giao dịch trước khi ký…
+      </p>
+    );
+  }
+
+  if (state === "revert") {
+    return (
+      <Alert variant="error">
+        <span className="flex items-start gap-2">
+          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            Mô phỏng cho thấy giao dịch sẽ thất bại
+            {reason ? `: ${mapSwapError(reason)}` : "."} Đã chặn để bạn không mất
+            phí gas — hãy giảm số lượng, tăng slippage, hoặc lấy quote mới.
+          </span>
+        </span>
+      </Alert>
+    );
+  }
+
+  return (
+    <p className="flex items-center justify-center gap-1.5 text-xs text-emerald-400/90">
+      <CheckCircle2 className="h-3.5 w-3.5" />
+      Đã mô phỏng thành công
+      {amountOut !== null &&
+        ` — nhận ${Number(formatUnits(amountOut, decimalsOut)).toLocaleString(
+          "en-US",
+          { maximumFractionDigits: 6 },
+        )} ${symbolOut}`}
+      {usedAllowanceOverride && " (giả lập đã approve)"}
+    </p>
   );
 }
 
@@ -488,12 +770,19 @@ function SwapButton(props: {
   insufficientBalance: boolean;
   quoting: boolean;
   hasQuote: boolean;
+  simulating: boolean;
+  simulationFailed: boolean;
   needsApproval: boolean;
+  permitChecking: boolean;
+  permitAvailable: boolean;
+  permitSigning: boolean;
+  permitReady: boolean;
   approving: boolean;
   signing: boolean;
   pending: boolean;
   symbolIn: string;
   onApprove: () => void;
+  onPermit: () => void;
   onSwap: () => void;
 }) {
   const p = props;
@@ -501,6 +790,7 @@ function SwapButton(props: {
   let action: (() => void) | undefined = p.onSwap;
   let disabled = false;
   let busy = false;
+  let icon: "permit" | null = null;
 
   if (!p.isConnected) {
     label = "Kết nối ví để swap";
@@ -529,10 +819,33 @@ function SwapButton(props: {
     label = "Chờ ký trong ví…";
     disabled = true;
     busy = true;
+  } else if (p.permitSigning) {
+    label = "Chờ ký permit trong ví…";
+    disabled = true;
+    busy = true;
   } else if (p.approving) {
     label = `Đang approve ${p.symbolIn}…`;
     disabled = true;
     busy = true;
+  } else if (p.simulating) {
+    // Chặn cả approve trong lúc mô phỏng: nếu lệnh sẽ revert thì approve cũng
+    // chỉ là gas bỏ đi.
+    label = "Đang mô phỏng…";
+    disabled = true;
+    busy = true;
+  } else if (p.simulationFailed) {
+    label = "Mô phỏng thất bại — không thể swap";
+    disabled = true;
+  } else if (p.needsApproval && p.permitChecking) {
+    // Đang dò xem token có permit không: chưa biết nên hiện nút nào.
+    label = "Đang kiểm tra permit…";
+    disabled = true;
+    busy = true;
+  } else if (p.needsApproval && p.permitAvailable) {
+    // Ưu tiên permit: rẻ hơn (1 tx thay vì 2) và không để lại allowance dư.
+    label = "Ký permit (không cần approve)";
+    action = p.onPermit;
+    icon = "permit";
   } else if (p.needsApproval) {
     label = `Approve ${p.symbolIn}`;
     action = p.onApprove;
@@ -545,6 +858,7 @@ function SwapButton(props: {
       className="w-full !py-3 text-base"
     >
       {busy && <Spinner />}
+      {icon === "permit" && <PenLine className="h-4 w-4" />}
       {label}
     </Button>
   );
@@ -569,32 +883,4 @@ function rate(
   const b = Number(formatUnits(amountOut, decOut));
   if (!a || !b) return "—";
   return (b / a).toLocaleString("en-US", { maximumSignificantDigits: 6 });
-}
-
-/** Map lỗi kỹ thuật -> thông báo dễ hiểu. */
-function mapError(msg: string): string {
-  const m = msg.toLowerCase();
-  if (m.includes("user rejected") || m.includes("user denied")) {
-    return "Bạn đã từ chối giao dịch trong ví.";
-  }
-  if (m.includes("insufficient funds")) {
-    return "Không đủ token bản địa để trả phí gas.";
-  }
-  if (
-    m.includes("insufficient liquidity") ||
-    m.includes("no available quotes") ||
-    m.includes("no route")
-  ) {
-    return "Không đủ thanh khoản / không có route cho cặp token này.";
-  }
-  if (m.includes("slippage") || m.includes("return amount is not enough")) {
-    return "Giá trượt quá dung sai — thử tăng slippage hoặc giảm số lượng.";
-  }
-  if (m.includes("expired")) {
-    return "Quote đã hết hạn — nhập lại số lượng để lấy quote mới.";
-  }
-  if (m.includes("allowance") || m.includes("transferhelper")) {
-    return "Approve chưa đủ — hãy approve lại rồi swap.";
-  }
-  return msg.split("\n")[0].slice(0, 140);
 }

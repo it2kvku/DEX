@@ -12,7 +12,9 @@ import { Send } from "@/features/transaction/Send";
 import { Receive } from "@/features/transaction/Receive";
 import { History } from "@/features/history/History";
 import { NftGallery } from "@/features/nft/NftGallery";
+import { AllowanceManager } from "@/features/allowance/AllowanceManager";
 import { InAppWalletPanel } from "@/features/in-app-wallet/InAppWalletPanel";
+import { TxNotices, TxQueue } from "@/features/tx/TxViews";
 import { NetworkSelector } from "@/components/NetworkSelector";
 import { WalletButton } from "@/components/WalletButton";
 import { CryptoIcon } from "@/components/CryptoIcon";
@@ -24,6 +26,7 @@ import {
   type WalletTab,
 } from "@/components/WalletCommandPalette";
 import { Alert } from "@/components/ui";
+import { WidgetErrorBoundary } from "@/components/WidgetErrorBoundary";
 
 const TABS: { id: WalletTab; label: string }[] = [
   { id: "assets", label: "Tài sản" },
@@ -32,8 +35,21 @@ const TABS: { id: WalletTab; label: string }[] = [
   { id: "receive", label: "Nhận" },
   { id: "history", label: "Lịch sử" },
   { id: "nft", label: "NFT" },
+  { id: "approvals", label: "Quyền" },
   { id: "wallet", label: "Ví" },
 ];
+
+/** Nguồn dữ liệu của từng tab — dùng cho thông báo lỗi. */
+const SOURCE_LABEL: Record<WalletTab, string> = {
+  assets: "danh sách tài sản (RPC + CoinGecko)",
+  swap: "swap (aggregator/Uniswap)",
+  send: "gửi token",
+  receive: "nhận token",
+  history: "lịch sử (Etherscan)",
+  nft: "NFT (Alchemy)",
+  approvals: "quyền chi tiêu",
+  wallet: "ví in-app",
+};
 
 export default function AppPage() {
   const { isConnected } = useAccount();
@@ -167,19 +183,35 @@ export default function AppPage() {
             ) : !isConnected ? (
               <EmptyConnect />
             ) : (
-              <>
+              /* Mỗi tab bọc boundary riêng, `key={tab}` để đổi tab là xoá lỗi
+                 cũ — nếu không, một tab đã lỗi sẽ hiện lỗi vĩnh viễn. Nhãn ghi
+                 rõ nguồn dữ liệu vì đây đều là API bên thứ ba có thể đổi shape
+                 response bất cứ lúc nào. */
+              <WidgetErrorBoundary key={tab} label={SOURCE_LABEL[tab]}>
                 {tab === "assets" && <AssetList />}
                 {tab === "swap" && <Swap />}
                 {tab === "send" && <Send />}
                 {tab === "receive" && <Receive />}
                 {tab === "history" && <History />}
                 {tab === "nft" && <NftGallery />}
-              </>
+                {tab === "approvals" && <AllowanceManager />}
+              </WidgetErrorBoundary>
             )}
           </div>
         </motion.div>
+
+        {/* Hàng đợi giao dịch: hiện dưới card, dùng chung cho mọi tab vì tx vẫn
+            chạy khi người dùng đã chuyển sang tab khác. */}
+        {isConnected && (
+          <div className="mt-3">
+            <WidgetErrorBoundary label="hàng đợi giao dịch">
+              <TxQueue />
+            </WidgetErrorBoundary>
+          </div>
+        )}
       </div>
 
+      <TxNotices />
       <Toast message={toast} />
     </main>
   );
@@ -205,7 +237,9 @@ function TubelightTabs({
     <div
       className={
         boxed
-          ? "flex items-center gap-0.5 rounded-full border border-white/[0.08] bg-zinc-950/75 p-1.5 shadow-2xl backdrop-blur-xl"
+          ? // 8 tab không vừa màn hình hẹp -> cho phép cuộn ngang thay vì để
+            // pill tràn ra ngoài viewport.
+            "flex max-w-[calc(100vw-2rem)] items-center gap-0.5 overflow-x-auto rounded-full border border-white/[0.08] bg-zinc-950/75 p-1.5 shadow-2xl backdrop-blur-xl [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           : "flex items-center gap-0.5"
       }
     >
@@ -213,7 +247,7 @@ function TubelightTabs({
         <button
           key={t.id}
           onClick={() => setTab(t.id)}
-          className={`relative rounded-full px-2.5 py-1.5 text-xs font-medium outline-none transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-white/20 lg:px-3 lg:text-sm ${
+          className={`relative shrink-0 rounded-full px-2.5 py-1.5 text-xs font-medium outline-none transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-white/20 lg:px-3 lg:text-sm ${
             tab === t.id ? "text-white" : "text-[#98a1c0] hover:text-white"
           }`}
         >

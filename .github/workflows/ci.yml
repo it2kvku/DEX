@@ -1,0 +1,91 @@
+# CI: chạy đúng 4 cửa mà một pull request phải qua được — lint, typecheck,
+# unit test, production build — rồi mới tới smoke test trên trình duyệt.
+#
+# Vì sao tách thành 2 job: `check` chạy trong ~1-2 phút và bắt hầu hết lỗi, nên
+# nó phải trả lời NGAY. `e2e` phải build Next rồi mở Chromium nên chậm hơn nhiều;
+# để chung một job thì một lỗi typo cũng phải chờ hết e2e mới thấy.
+#
+# Vì sao không cần secret nào: `buildTransports` có RPC công khai dự phòng khi
+# thiếu NEXT_PUBLIC_ALCHEMY_API_KEY, và e2e chặn toàn bộ tầng mạng bằng
+# `page.route` (e2e/fixtures/rpc-mock.ts) nên không gọi ra internet thật. Fork PR
+# vì thế chạy được mà không lộ key.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Push liên tiếp vào cùng một branch: huỷ lần chạy cũ, chỉ giữ commit mới nhất.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint · Typecheck · Test · Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # `npm ci` (không phải `npm install`): cài đúng cây phụ thuộc trong
+      # package-lock.json, nên CI không bao giờ đỏ/xanh vì một minor version mới
+      # vừa được publish.
+      - run: npm ci
+
+      # Bốn bước độc lập nhau. `if: always()` để một bước đỏ vẫn chạy tiếp các
+      # bước sau — developer thấy TẤT CẢ lỗi trong một lần chạy thay vì sửa
+      # từng cái rồi push lại.
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        if: always()
+        run: npm run typecheck
+
+      - name: Unit test
+        if: always()
+        run: npm test
+
+      - name: Build
+        if: always()
+        run: npm run build
+
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Chỉ Chromium: playwright.config.ts khai báo duy nhất project này, tải
+      # thêm Firefox/WebKit là tốn ~300MB không dùng tới.
+      - name: Cài Chromium cho Playwright
+        run: npx playwright install --with-deps chromium
+
+      # `webServer` trong playwright.config.ts tự chạy `npm run build && npm run
+      # start`, nên không cần build riêng ở đây.
+      - name: Chạy smoke test
+        run: npx playwright test
+
+      # Report chỉ có giá trị khi test đỏ, nhưng phải upload kể cả lúc đó (mặc
+      # định step sau khi fail sẽ bị bỏ qua) -> `if: failure()`.
+      - name: Lưu Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
