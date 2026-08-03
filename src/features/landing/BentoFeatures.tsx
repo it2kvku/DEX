@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { motion } from "framer-motion";
 import {
   ShieldCheck,
@@ -9,6 +10,14 @@ import {
 } from "lucide-react";
 import { CryptoIcon } from "@/components/CryptoIcon";
 import { CountUp } from "@/components/anim/CountUp";
+
+/** Ảnh NFT mẫu (PFP) minh họa cho thẻ NFT Portfolio ở landing. */
+const NFT_PREVIEWS = [
+  { src: "/nft/nft01.jpg", alt: "NFT pixel punk" },
+  { src: "/nft/nft02.jpg", alt: "NFT bored ape" },
+  { src: "/nft/nft03.jpg", alt: "NFT anime samurai" },
+  { src: "/nft/nft04.jpg", alt: "NFT rainbow character" },
+] as const;
 
 /**
  * Bento Grid 4 tính năng chính — bố cục bất đối xứng,
@@ -84,16 +93,19 @@ export function BentoFeatures() {
           Bộ sưu tập ERC-721/1155 trực quan.
         </p>
         <div className="mt-4 grid grid-cols-2 gap-2">
-          {[
-            "from-violet-500/50 to-fuchsia-500/40",
-            "from-cyan-500/40 to-sky-500/40",
-            "from-amber-500/40 to-rose-500/40",
-            "from-emerald-500/40 to-teal-500/40",
-          ].map((g) => (
+          {NFT_PREVIEWS.map((nft) => (
             <div
-              key={g}
-              className={`aspect-square rounded-xl border border-white/[0.08] bg-gradient-to-br ${g}`}
-            />
+              key={nft.src}
+              className="relative aspect-square overflow-hidden rounded-xl border border-white/[0.08] bg-black/40"
+            >
+              <Image
+                src={nft.src}
+                alt={nft.alt}
+                fill
+                sizes="(min-width: 768px) 120px, 40vw"
+                className="object-cover transition-transform duration-300 hover:scale-105"
+              />
+            </div>
           ))}
         </div>
       </BentoCard>

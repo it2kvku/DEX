@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { Sparkles, ArrowRight } from "lucide-react";
 import { AuroraBackground } from "@/components/AuroraBackground";
+import { BrandLogo } from "@/components/BrandLogo";
 import { HoverButton } from "@/components/HoverButton";
 import { TiltMockup } from "./TiltMockup";
 import { BentoFeatures } from "./BentoFeatures";
@@ -29,14 +30,7 @@ export function Landing() {
       {/* ===== Navbar landing tối giản ===== */}
       <nav className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-4 sm:px-6">
         <div className="flex items-center gap-2.5">
-          <div
-            className="h-7 w-7 rounded-lg"
-            style={{
-              background:
-                "linear-gradient(135deg, #ff007a, #b478ff 60%, #4c82fb)",
-            }}
-            aria-hidden
-          />
+          <BrandLogo height={30} priority />
           <span className="font-display text-sm font-bold tracking-tight">
             Web3 Wallet
           </span>

@@ -18,6 +18,7 @@ import { TxNotices, TxQueue } from "@/features/tx/TxViews";
 import { NetworkSelector } from "@/components/NetworkSelector";
 import { WalletButton } from "@/components/WalletButton";
 import { CryptoIcon } from "@/components/CryptoIcon";
+import { BrandLogo } from "@/components/BrandLogo";
 import { BoxesBackground } from "@/components/BoxesBackground";
 import { HoverButton } from "@/components/HoverButton";
 import { Toast } from "@/components/Toast";
@@ -116,14 +117,7 @@ export default function AppPage() {
         <div className="relative mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-4 sm:px-6">
           {/* Logo */}
           <div className="flex shrink-0 items-center gap-2.5">
-            <div
-              className="h-7 w-7 rounded-lg"
-              style={{
-                background:
-                  "linear-gradient(135deg, #ff007a, #b478ff 60%, #4c82fb)",
-              }}
-              aria-hidden
-            />
+            <BrandLogo height={30} priority />
             <span className="hidden font-display text-sm font-bold tracking-tight text-white lg:inline">
               Web3 Wallet
             </span>

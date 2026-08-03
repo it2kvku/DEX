@@ -3,6 +3,7 @@
 import { useRef, type MouseEvent } from "react";
 import { motion, useMotionValue, useSpring } from "framer-motion";
 import { CryptoIcon } from "@/components/CryptoIcon";
+import { BrandLogo } from "@/components/BrandLogo";
 import { Send, QrCode, ArrowLeftRight } from "lucide-react";
 
 const MOCK_TOKENS = [
@@ -61,13 +62,7 @@ export function TiltMockup() {
         {/* Header mock */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div
-              className="h-6 w-6 rounded-lg"
-              style={{
-                background:
-                  "linear-gradient(135deg, #ff007a, #b478ff 60%, #4c82fb)",
-              }}
-            />
+            <BrandLogo height={24} />
             <span className="font-display text-sm font-bold text-white">
               Web3 Wallet
             </span>

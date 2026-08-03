@@ -2,6 +2,7 @@
 
 import { Code2, MessageCircle, Globe } from "lucide-react";
 import { ChainIcon } from "@/components/CryptoIcon";
+import { BrandLogo } from "@/components/BrandLogo";
 
 const NETWORK_STATUS = [
   { chainId: 1, name: "Ethereum" },
@@ -17,14 +18,7 @@ export function LandingFooter() {
       <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
         {/* Brand */}
         <div className="flex items-center gap-2.5">
-          <div
-            className="h-7 w-7 rounded-lg"
-            style={{
-              background:
-                "linear-gradient(135deg, #ff007a, #b478ff 60%, #4c82fb)",
-            }}
-            aria-hidden
-          />
+          <BrandLogo height={30} />
           <div>
             <p className="font-display text-sm font-bold text-white">
               Web3 Wallet
