@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Icon, addCollection } from "@iconify/react";
+import { tokenLogoUrl } from "@/lib/tokenLogo";
 import { TokenAvatar } from "./TokenAvatar";
 
 /**
@@ -48,6 +49,16 @@ const symbolOverrides: Record<string, string> = {
   // Sepolia là testnet của Ethereum — dùng icon ETH.
   sepoliaeth: "eth",
   weth: "eth",
+  uni: "uni",
+};
+
+/** Fallback slug Iconify khi CDN chain logo lỗi. */
+const chainSymbol: Record<number, string> = {
+  1: "eth",
+  56: "bnb",
+  137: "matic",
+  42161: "arb",
+  11155111: "eth",
 };
 
 /**
@@ -79,15 +90,7 @@ export function CryptoIcon({
   );
 }
 
-/** Icon theo chainId (dùng cho Network Selector). */
-const chainSymbol: Record<number, string> = {
-  1: "eth",
-  56: "bnb",
-  137: "matic",
-  42161: "arb", // chưa có trong bộ -> fallback avatar chữ
-  11155111: "eth",
-};
-
+/** Icon theo chainId — logo Trust Wallet CDN, fallback Iconify/avatar chữ. */
 export function ChainIcon({
   chainId,
   size = 20,
@@ -95,6 +98,23 @@ export function ChainIcon({
   chainId: number;
   size?: number;
 }) {
+  const [cdnFailed, setCdnFailed] = useState(false);
+  const cdnUrl = tokenLogoUrl(chainId);
+
+  if (cdnUrl && !cdnFailed) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={cdnUrl}
+        alt=""
+        width={size}
+        height={size}
+        className="shrink-0 rounded-full object-cover"
+        onError={() => setCdnFailed(true)}
+      />
+    );
+  }
+
   const symbol = chainSymbol[chainId] ?? String(chainId);
   return <CryptoIcon symbol={symbol} size={size} />;
 }

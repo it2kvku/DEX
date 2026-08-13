@@ -64,6 +64,8 @@ const contentSecurityPolicy = [
     "https://polygon-rpc.com",
     "https://arb1.arbitrum.io",
     "https://api.coingecko.com",
+    "https://coins.llama.fi",
+    "https://api.geckoterminal.com",
     "https://api.etherscan.io",
     "https://li.quest",
     "https://*.walletconnect.com",

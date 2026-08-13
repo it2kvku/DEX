@@ -45,7 +45,16 @@ const SLIPPAGE_PRESETS = [10, 50, 100]; // bps: 0.1% / 0.5% / 1%
  * State machine: idle -> quoting -> quote_ready -> (needs_approval ->
  * approving -> approved) -> signing -> pending -> success/failed.
  */
-export function Swap() {
+export function Swap({
+  defaultTokenIn = "native",
+  defaultTokenOut = null,
+  compact = false,
+}: {
+  defaultTokenIn?: TokenChoice;
+  defaultTokenOut?: TokenChoice | null;
+  /** Giao diện gọn cho trang token (sidebar swap). */
+  compact?: boolean;
+} = {}) {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
   const { rows } = useAssets();
@@ -55,8 +64,8 @@ export function Swap() {
   const { track } = useTxCenter();
 
   // ---- Form state ----
-  const [tokenIn, setTokenIn] = useState<TokenChoice | null>("native");
-  const [tokenOut, setTokenOut] = useState<TokenChoice | null>(null);
+  const [tokenIn, setTokenIn] = useState<TokenChoice | null>(defaultTokenIn);
+  const [tokenOut, setTokenOut] = useState<TokenChoice | null>(defaultTokenOut);
   const [amountIn, setAmountIn] = useState("");
   const [slippageBps, setSlippageBps] = useState(50);
   const [customSlippage, setCustomSlippage] = useState("");
@@ -65,11 +74,11 @@ export function Swap() {
 
   // Reset lựa chọn khi đổi chain (token list khác nhau).
   useEffect(() => {
-    setTokenIn("native");
-    setTokenOut(null);
+    setTokenIn(defaultTokenIn);
+    setTokenOut(defaultTokenOut);
     setAmountIn("");
     setSucceeded(false);
-  }, [chainId]);
+  }, [chainId, defaultTokenIn, defaultTokenOut]);
 
   // ---- Token info ----
   const rowIn = rows.find((r) =>
@@ -393,7 +402,7 @@ export function Swap() {
       : "");
 
   return (
-    <div className="space-y-3">
+    <div className={compact ? "space-y-2.5" : "space-y-3"}>
       {/* Header: tiêu đề + settings slippage */}
       <div className="flex items-center justify-between px-1">
         <h3 className="font-display text-sm font-semibold text-white">

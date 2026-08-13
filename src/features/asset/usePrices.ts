@@ -1,46 +1,25 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import {
+  fetchCurrentPrices,
+  type PriceInfo,
+} from "@/lib/marketData";
 
-export interface PriceInfo {
-  usd: number;
-  /** Biến động giá 24h (%), có thể âm. */
-  change24h: number;
-}
+export type { PriceInfo };
 
 /**
- * Lấy giá USD + biến động 24h theo danh sách id CoinGecko.
- * Dùng endpoint công khai (không cần API key). Kết quả cache 60s.
+ * Giá USD + biến động 24h qua DefiLlama (không cần API key, giới hạn thoải mái).
+ * `keys` là danh sách key DefiLlama, vd `coingecko:ethereum`, `ethereum:0x…`.
  */
-export function usePrices(coingeckoIds: string[]) {
-  // Loại trùng + bỏ rỗng để query key ổn định.
-  const ids = Array.from(new Set(coingeckoIds.filter(Boolean))).sort();
+export function usePrices(llamaKeys: string[]) {
+  const keys = Array.from(new Set(llamaKeys.filter(Boolean))).sort();
 
   return useQuery({
-    queryKey: ["prices", ids],
-    enabled: ids.length > 0,
+    queryKey: ["prices", keys],
+    enabled: keys.length > 0,
     staleTime: 60_000,
     refetchInterval: 60_000,
-    queryFn: async (): Promise<Record<string, PriceInfo>> => {
-      const url =
-        `https://api.coingecko.com/api/v3/simple/price?ids=${ids.join(",")}` +
-        `&vs_currencies=usd&include_24hr_change=true`;
-      const res = await fetch(url);
-      if (!res.ok) {
-        throw new Error(`CoinGecko trả về ${res.status}`);
-      }
-      const data = (await res.json()) as Record<
-        string,
-        { usd?: number; usd_24h_change?: number }
-      >;
-      const prices: Record<string, PriceInfo> = {};
-      for (const id of ids) {
-        prices[id] = {
-          usd: data[id]?.usd ?? 0,
-          change24h: data[id]?.usd_24h_change ?? 0,
-        };
-      }
-      return prices;
-    },
+    queryFn: () => fetchCurrentPrices(keys),
   });
 }

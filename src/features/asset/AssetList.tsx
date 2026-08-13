@@ -1,33 +1,44 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
+import { useChainId } from "wagmi";
 import { useAssets } from "./useBalances";
 import { usePrices } from "./usePrices";
+import { llamaKeyForAsset } from "@/lib/marketData";
 import { ImportToken } from "./ImportToken";
 import { formatBalance, formatUsd } from "@/lib/format";
 import { Alert, Badge, Button, Card, Skeleton } from "@/components/ui";
 import { CountUp } from "@/components/anim/CountUp";
 import { Reveal } from "@/components/anim/Reveal";
-import { CryptoIcon } from "@/components/CryptoIcon";
+import { TokenLogo } from "@/components/TokenLogo";
 
 export function AssetList() {
+  const chainId = useChainId();
   const { rows, isLoading, isError, refetch, addToken, removeToken } =
     useAssets();
   const [importing, setImporting] = useState(false);
 
-  const ids = useMemo(
-    () => rows.map((r) => r.coingeckoId).filter((x): x is string => !!x),
-    [rows],
-  );
-  const { data: prices } = usePrices(ids);
+  const llamaKeys = useMemo(() => {
+    const keys = rows
+      .map((r) => llamaKeyForAsset(chainId, r))
+      .filter((k): k is string => !!k);
+    return Array.from(new Set(keys)).sort();
+  }, [rows, chainId]);
+
+  const keyForRow = (r: (typeof rows)[number]) =>
+    llamaKeyForAsset(chainId, r);
+
+  const { data: prices } = usePrices(llamaKeys);
 
   const totalUsd = useMemo(() => {
     return rows.reduce((sum, r) => {
-      const price = r.coingeckoId ? (prices?.[r.coingeckoId]?.usd ?? 0) : 0;
+      const lk = llamaKeyForAsset(chainId, r);
+      const price = lk ? (prices?.[lk]?.usd ?? 0) : 0;
       const amount = Number(formatBalanceRaw(r.balance, r.decimals));
       return sum + amount * price;
     }, 0);
-  }, [rows, prices]);
+  }, [rows, prices, chainId]);
 
   if (isLoading) {
     return (
@@ -73,52 +84,68 @@ export function AssetList() {
           <CountUp value={totalUsd} format={formatUsd} />
         </p>
         <p className="mt-1 text-xs text-neutral-500">
-          Ước tính theo giá CoinGecko · cập nhật mỗi 60s
+          Ước tính theo giá DefiLlama · cập nhật mỗi 60s
         </p>
       </Card>
 
       {/* Danh sách token */}
       <div className="space-y-2">
         {rows.map((r) => {
-          const info = r.coingeckoId ? prices?.[r.coingeckoId] : undefined;
+          const lk = keyForRow(r);
+          const info = lk ? prices?.[lk] : undefined;
           const price = info?.usd ?? 0;
           const change = info?.change24h;
           const amount = Number(formatBalanceRaw(r.balance, r.decimals));
           const usd = amount * price;
+          const href =
+            r.kind === "native"
+              ? "/app/token/native"
+              : `/app/token/${r.address}`;
           return (
             <Card
               key={`${r.kind}-${r.address ?? "native"}`}
               className="flex items-center gap-3 transition-colors hover:bg-white/[0.06]"
             >
-              <CryptoIcon symbol={r.symbol} />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">{r.symbol}</span>
-                  {r.kind === "native" && <Badge tone="indigo">native</Badge>}
-                  {r.isCustom && <Badge>custom</Badge>}
+              <Link
+                href={href}
+                className="flex min-w-0 flex-1 cursor-pointer items-center gap-3"
+              >
+                <TokenLogo
+                  chainId={chainId}
+                  address={r.kind === "erc20" ? r.address : undefined}
+                  symbol={r.symbol}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">{r.symbol}</span>
+                    {r.kind === "native" && (
+                      <Badge tone="indigo">native</Badge>
+                    )}
+                    {r.isCustom && <Badge>custom</Badge>}
+                  </div>
+                  <span className="block truncate text-xs text-neutral-500">
+                    {r.name}
+                  </span>
                 </div>
-                <span className="block truncate text-xs text-neutral-500">
-                  {r.name}
-                </span>
-              </div>
-              <div className="text-right">
-                <div className="font-mono text-sm">
-                  {formatBalance(r.balance, r.decimals)}
+                <div className="text-right">
+                  <div className="font-mono text-sm">
+                    {formatBalance(r.balance, r.decimals)}
+                  </div>
+                  <div className="flex items-center justify-end gap-1.5 text-xs text-neutral-500">
+                    {price > 0 ? formatUsd(usd) : "—"}
+                    {change !== undefined && price > 0 && (
+                      <span
+                        className={
+                          change >= 0 ? "text-emerald-400" : "text-rose-400"
+                        }
+                      >
+                        {change >= 0 ? "+" : ""}
+                        {change.toFixed(2)}%
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <div className="flex items-center justify-end gap-1.5 text-xs text-neutral-500">
-                  {price > 0 ? formatUsd(usd) : "—"}
-                  {change !== undefined && price > 0 && (
-                    <span
-                      className={
-                        change >= 0 ? "text-emerald-400" : "text-rose-400"
-                      }
-                    >
-                      {change >= 0 ? "+" : ""}
-                      {change.toFixed(2)}%
-                    </span>
-                  )}
-                </div>
-              </div>
+              </Link>
               {r.isCustom && r.address && (
                 <Button
                   variant="ghost"
