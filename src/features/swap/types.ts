@@ -68,10 +68,29 @@ export interface SwapQuote {
   route: RoutePlan | null;
   /** Chi tiết calldata để chèn permit; null nếu nguồn không cho phép. */
   plan: SwapPlan | null;
+  /**
+   * Có mặt khi cả engine nội bộ VÀ aggregator cùng trả quote cho chain đó:
+   * dùng để hiển thị "vì sao chọn nguồn này" và khóa hành vi so sánh.
+   */
+  comparison?: QuoteComparison;
   txRequest: {
     to: Address;
     data: Hex;
     value: bigint;
     gasLimit: bigint | null;
   };
+}
+
+/**
+ * Kết quả so sánh hai nguồn quote cho cùng một lệnh swap. "Usd" là net output
+ * quy USD (toAmountUsd − gasUsd); null khi một nguồn không có giá (vd testnet
+ * hoặc DefiLlama thiếu token) — khi đó việc so sánh rơi về toAmount thô.
+ */
+export interface QuoteComparison {
+  engineUsd: number | null;
+  aggregatorUsd: number | null;
+  /** Nguồn được chọn để thực thi. */
+  chosen: "engine" | "aggregator";
+  /** % lợi thế của nguồn thắng so với nguồn thua (theo cơ số đã dùng). */
+  advantagePct: number | null;
 }

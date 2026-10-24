@@ -29,7 +29,11 @@ import {
  * gas đắt — đó là điểm khác giữa "best quote" và "best execution".
  */
 
-const QUOTER_V2 = "0xEd1f6473345F45b75F8179591dd5bA1888cf2FB3" as Address;
+/** Contract V3 của chain đang route — lấy từ V3ChainConfig. */
+export interface V3Contracts {
+  factory: Address;
+  quoterV2: Address;
+}
 
 const quoterAbi = [
   {
@@ -113,6 +117,7 @@ export interface RoutingResult {
  */
 export async function findBestRoute(
   client: PublicClient,
+  contracts: V3Contracts,
   candidates: Candidate[],
   amountIn: bigint,
   gasPriceWei: bigint,
@@ -128,12 +133,17 @@ export async function findBestRoute(
   );
   const poolsOf: Address[][] = candidates.map((c) =>
     c.fees.map((fee, h) =>
-      computePoolAddress(c.tokens[h].address, c.tokens[h + 1].address, fee),
+      computePoolAddress(
+        c.tokens[h].address,
+        c.tokens[h + 1].address,
+        fee,
+        contracts.factory,
+      ),
     ),
   );
 
   const quoteCalls: Call3[] = paths.map((path) => ({
-    target: QUOTER_V2,
+    target: contracts.quoterV2,
     callData: encodeFunctionData({
       abi: quoterAbi,
       functionName: "quoteExactInput",
@@ -208,7 +218,7 @@ export async function findBestRoute(
   // ---- Bước 3: mid price + price impact cho top route ----
   // Chỉ tính cho vài route đầu — mid price chỉ dùng để hiển thị, không đổi
   // thứ hạng, nên không cần trả phí RPC cho cả 36 route.
-  await attachPriceImpact(client, quoted.slice(0, 5), amountIn);
+  await attachPriceImpact(client, contracts.factory, quoted.slice(0, 5), amountIn);
 
   return {
     best: quoted[0],
@@ -226,6 +236,7 @@ export async function findBestRoute(
  */
 async function attachPriceImpact(
   client: PublicClient,
+  factory: Address,
   routes: QuotedRoute[],
   amountIn: bigint,
 ): Promise<void> {
@@ -305,11 +316,12 @@ async function attachPriceImpact(
  */
 export async function fetchMidRate(
   client: PublicClient,
+  factory: Address,
   tokenA: RouteToken,
   tokenB: RouteToken,
 ): Promise<number | null> {
   const pools = FEE_TIERS.map((fee) =>
-    computePoolAddress(tokenA.address, tokenB.address, fee),
+    computePoolAddress(tokenA.address, tokenB.address, fee, factory),
   );
   const slot0Data = encodeFunctionData({ abi: poolAbi, functionName: "slot0" });
   const liquidityData = encodeFunctionData({

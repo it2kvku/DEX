@@ -12,13 +12,13 @@ import {
  * Vì sao CREATE2 thay vì getPool: routing engine cần biết địa chỉ của hàng
  * chục pool ứng viên. Tính offline = 0 RPC call, thay vì N call getPool.
  * Đã xác minh khớp 100% với Factory.getPool cho 12 pool trên Sepolia.
+ *
+ * Factory truyền vào theo chain (xem routing/chains.ts) — mainnet/L2 và
+ * Sepolia dùng hai địa chỉ deploy khác nhau; init code hash thì giống nhau.
  */
 
-/** UniswapV3Factory — cùng địa chỉ trên Sepolia. */
-const FACTORY_SEPOLIA = "0x0227628f3F023bb0B980b67D528571c95c6DaC1c" as Address;
-
-/** keccak256 của creation bytecode UniswapV3Pool (hằng số của protocol). */
-const POOL_INIT_CODE_HASH =
+/** keccak256 của creation bytecode UniswapV3Pool — giống nhau trên mọi chain. */
+export const POOL_INIT_CODE_HASH =
   "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54";
 
 /** 4 fee tier chuẩn của Uniswap V3 (đơn vị phần triệu). */
@@ -38,6 +38,7 @@ export function computePoolAddress(
   tokenA: Address,
   tokenB: Address,
   fee: number,
+  factory: Address,
 ): Address {
   const [token0, token1] = sortTokens(tokenA, tokenB);
   const salt = keccak256(
@@ -48,7 +49,7 @@ export function computePoolAddress(
   );
   return getContractAddress({
     opcode: "CREATE2",
-    from: FACTORY_SEPOLIA,
+    from: factory,
     bytecodeHash: POOL_INIT_CODE_HASH,
     salt,
   });

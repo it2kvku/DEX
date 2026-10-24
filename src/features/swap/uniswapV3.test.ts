@@ -5,7 +5,7 @@ import {
   type Address,
   type Hex,
 } from "viem";
-import { withSelfPermit, isSwapChainSupported, SEPOLIA_CHAIN_ID } from "./uniswapSepolia";
+import { withSelfPermit, isSwapChainSupported, SEPOLIA_CHAIN_ID } from "./uniswapV3";
 import type { SwapQuote } from "./types";
 
 /**

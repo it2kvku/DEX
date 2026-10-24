@@ -29,11 +29,12 @@ import { useSwapSimulation } from "./useSwapSimulation";
 import { usePermit } from "./usePermit";
 import { mapSwapError } from "./errors";
 import { NATIVE_TOKEN_ADDRESS } from "./types";
+import type { SwapQuote } from "./types";
 import {
   isSwapChainSupported,
   SEPOLIA_CHAIN_ID,
   withSelfPermit,
-} from "./uniswapSepolia";
+} from "./uniswapV3";
 import { RouteView } from "./RouteView";
 import type { RouteToken } from "./routing/path";
 import { TokenSelect, type TokenChoice } from "./TokenSelect";
@@ -608,6 +609,7 @@ export function Swap({
             value={q.gasUsd ? formatUsd(q.gasUsd) : "—"}
           />
           <Row label="Slippage" value={`${(slippageBps / 100).toFixed(2)}%`} />
+          {q.comparison && <ComparisonRow comparison={q.comparison} />}
           <Row
             label="Nguồn"
             value={
@@ -878,6 +880,35 @@ function Row({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between gap-3">
       <span className="text-neutral-500">{label}</span>
       <span className="truncate font-mono text-neutral-300">{value}</span>
+    </div>
+  );
+}
+
+/**
+ * Dòng so sánh hai nguồn quote (engine V3 vs LI.FI) — nói rõ "vì sao chọn
+ * nguồn này" thay vì im lặng. USD là net output (đã trừ gas); thiếu giá thì
+ * hiển thị "—" và chỉ ghi lợi thế %.
+ */
+function ComparisonRow({
+  comparison,
+}: {
+  comparison: NonNullable<SwapQuote["comparison"]>;
+}) {
+  const { engineUsd, aggregatorUsd, chosen, advantagePct } = comparison;
+  const fmt = (v: number | null) => (v !== null && v > 0 ? formatUsd(v) : "—");
+  const edge =
+    advantagePct !== null && advantagePct >= 0.01
+      ? chosen === "engine"
+        ? ` — engine tốt hơn +${advantagePct.toFixed(2)}%`
+        : ` — LI.FI tốt hơn +${advantagePct.toFixed(2)}%`
+      : " — hai nguồn ngang nhau";
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <span className="text-neutral-500">So sánh nguồn</span>
+      <span className="truncate text-right font-mono text-neutral-300">
+        Engine {fmt(engineUsd)} · LI.FI {fmt(aggregatorUsd)}
+        <span className="text-neutral-500">{edge}</span>
+      </span>
     </div>
   );
 }

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Address } from "viem";
+import { mainnet } from "wagmi/chains";
+import { getV3ChainConfig } from "./chains";
 import {
   computePoolAddress,
   midRateFromSqrtPrice,
@@ -12,10 +14,13 @@ import {
  * "sai âm thầm": địa chỉ pool tính lệch thì `slot0` revert và route bị bỏ như
  * thể pool không có thanh khoản; mid price lệch thì price impact hiển thị sai mà
  * không có gì báo lỗi. Nên giá trị mong đợi ở đây KHÔNG phải tự bịa — đều đã
- * đối chiếu on-chain trên Sepolia:
+ * đối chiếu on-chain:
  *
- *   - Địa chỉ pool: so với `UniswapV3Factory.getPool` cho 6 pool (4 fee tier của
- *     WETH/USDC + WETH/UNI + USDC/UNI) — khớp 6/6.
+ *   - Địa chỉ pool Sepolia: so với `UniswapV3Factory.getPool` cho 6 pool (4 fee
+ *     tier của WETH/USDC + WETH/UNI + USDC/UNI) — khớp 6/6.
+ *   - Địa chỉ pool mainnet: so với pool thật đang sống của Uniswap (USDC/WETH
+ *     0.05% và WETH/USDT 0.3%) — khóa rằng factory của deploy mainnet + init
+ *     code hash là đúng bộ đôi, vì sai một bit thì CREATE2 ra địa chỉ khác.
  *   - sqrtPriceX96 = 496673595936264413521926321327836 là `slot0()` thật của pool
  *     WETH/USDC fee 3000 (0x6Ce0896e…9b50) lúc viết test.
  */
@@ -23,6 +28,9 @@ import {
 const WETH = "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14" as Address;
 const USDC = "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238" as Address;
 const UNI = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984" as Address;
+
+const SEPOLIA_FACTORY = getV3ChainConfig(11155111)!.factory;
+const MAINNET_FACTORY = getV3ChainConfig(mainnet.id)!.factory;
 
 const Q96 = 2n ** 96n;
 
@@ -50,23 +58,66 @@ describe("computePoolAddress", () => {
   ];
 
   it.each(KNOWN)(
-    "khớp Factory.getPool cho fee %#",
+    "khớp Factory.getPool Sepolia cho fee %#",
     (a, b, fee, expected) => {
-      expect(computePoolAddress(a, b, fee)).toBe(expected);
+      expect(computePoolAddress(a, b, fee, SEPOLIA_FACTORY)).toBe(expected);
     },
   );
 
+  it("khớp pool mainnet đang sống: USDC/WETH 0.05% (0x88e6…5640)", () => {
+    expect(
+      computePoolAddress(
+        "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        500,
+        MAINNET_FACTORY,
+      ),
+    ).toBe("0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640");
+  });
+
+  // Hai pool dưới đây đã đối chiếu `Factory.getPool` trực tiếp trên mainnet
+  // (eth_call qua RPC) — khoá luôn cả việc "fee nào ứng pool nào".
+  it("khớp pool mainnet: WETH/USDT 0.3% (0x4e68…fa36)", () => {
+    expect(
+      computePoolAddress(
+        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+        3000,
+        MAINNET_FACTORY,
+      ),
+    ).toBe("0x4e68Ccd3E89f51C3074ca5072bbAC773960dFa36");
+  });
+
+  it("khớp pool mainnet: WETH/USDT 0.05% (0x11b8…97F6)", () => {
+    expect(
+      computePoolAddress(
+        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+        500,
+        MAINNET_FACTORY,
+      ),
+    ).toBe("0x11b815efB8f581194ae79006d24E0d814B7697F6");
+  });
+
   it("thứ tự token không ảnh hưởng kết quả", () => {
     for (const fee of FEE_TIERS) {
-      expect(computePoolAddress(WETH, USDC, fee)).toBe(
-        computePoolAddress(USDC, WETH, fee),
+      expect(computePoolAddress(WETH, USDC, fee, SEPOLIA_FACTORY)).toBe(
+        computePoolAddress(USDC, WETH, fee, SEPOLIA_FACTORY),
       );
     }
   });
 
   it("mỗi fee tier là một pool khác nhau", () => {
-    const addrs = FEE_TIERS.map((f) => computePoolAddress(WETH, USDC, f));
+    const addrs = FEE_TIERS.map((f) =>
+      computePoolAddress(WETH, USDC, f, SEPOLIA_FACTORY),
+    );
     expect(new Set(addrs).size).toBe(FEE_TIERS.length);
+  });
+
+  it("factory khác nhau (mainnet vs Sepolia) cho địa chỉ pool khác nhau", () => {
+    expect(computePoolAddress(WETH, USDC, 3000, MAINNET_FACTORY)).not.toBe(
+      computePoolAddress(WETH, USDC, 3000, SEPOLIA_FACTORY),
+    );
   });
 });
 

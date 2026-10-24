@@ -5,47 +5,46 @@ import {
   type PublicClient,
 } from "viem";
 import { sepolia } from "wagmi/chains";
+import {
+  NATIVE_LLAMA_KEY,
+  fetchCurrentPrices,
+  toLlamaKey,
+} from "@/lib/marketData";
 import { isSwapSupported as isLifiSupported } from "./lifi";
 import type { SwapQuote } from "./types";
-import { buildCandidates, type RouteToken } from "./routing/path";
+import { getV3ChainConfig, isEngineChain } from "./routing/chains";
+import type { RouteToken } from "./routing/path";
+import { buildCandidates } from "./routing/path";
 import { fetchMidRate, findBestRoute } from "./routing/quoter";
 
 /**
- * DEX engine trên Sepolia: tự routing qua Uniswap V3 (LI.FI không hỗ trợ
- * testnet). Khác với việc gọi một Quoter duy nhất, tầng này:
+ * DEX engine nội bộ: tự routing qua Uniswap V3. Khác với việc gọi một Quoter
+ * duy nhất, tầng này:
  *   1. Sinh mọi route ứng viên (1-hop 4 fee tier + 2-hop qua token trung gian).
  *   2. Quote toàn bộ trong 1 round-trip RPC (Multicall3 + allowFailure).
  *   3. Chấm điểm theo net output (đã trừ gas) -> best execution.
  *   4. Tính price impact thật từ mid price của pool (không phải từ giá USD).
  *   5. Build calldata exactInput bọc trong multicall(deadline, ...).
  *
- * Toàn bộ địa chỉ contract, pool và luồng calldata (kể cả native in/out) đã
- * được kiểm chứng bằng eth_call + state override trên Sepolia.
+ * Chạy trên Ethereum / Arbitrum / Polygon / Sepolia (xem routing/chains.ts) —
+ * cấu hình contract và danh sách connector token khác nhau theo chain. Trên
+ * mainnet và L2, quote còn kèm giá USD thật (DefiLlama) để so sánh với
+ * aggregator ở tầng useSwapQuote; Sepolia giữ USD = 0 vì testnet không có
+ * giá thật.
+ *
+ * Toàn bộ luồng calldata (kể cả native in/out qua wrap/unwrap) đã được kiểm
+ * chứng bằng eth_call + state override trên Sepolia, và bằng quote + mô phỏng
+ * thật trên mainnet sau khi đa chain hoá.
  */
 
 export const SEPOLIA_CHAIN_ID = sepolia.id;
 
-const SWAP_ROUTER_02 = "0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E" as Address;
-const WETH_SEPOLIA = "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14" as Address;
-/** Hằng số ADDRESS_THIS của SwapRouter02 — giữ output tại router để unwrap. */
-const ADDRESS_THIS = "0x0000000000000000000000000000000000000002" as Address;
-
-/** Token trung gian dùng để dựng route 2-hop (giống base token list của Uniswap). */
-const CONNECTORS: RouteToken[] = [
-  { address: WETH_SEPOLIA, symbol: "WETH", decimals: 18 },
-  {
-    address: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238" as Address,
-    symbol: "USDC",
-    decimals: 6,
-  },
-];
-
 /** Thời hạn hiệu lực của giao dịch (phút) — quá hạn router tự revert. */
 const DEADLINE_MINUTES = 20;
 
-/** Chain hỗ trợ swap: mainnet qua LI.FI + Sepolia qua engine Uniswap V3. */
+/** Chain hỗ trợ swap: engine nội bộ (V3) hoặc LI.FI aggregator. */
 export function isSwapChainSupported(chainId: number): boolean {
-  return isLifiSupported(chainId) || chainId === SEPOLIA_CHAIN_ID;
+  return isLifiSupported(chainId) || isEngineChain(chainId);
 }
 
 const swapRouterAbi = [
@@ -91,8 +90,8 @@ const swapRouterAbi = [
   },
   {
     // Nhận chữ ký ERC-2612 rồi tự gọi token.permit — cho phép gộp
-    // "approve" và swap vào MỘT giao dịch. Đã xác nhận có trong bytecode
-    // của SwapRouter02 trên Sepolia.
+    // "approve" và swap vào MỘT giao dịch. Có trong bytecode SwapRouter02
+    // trên mọi chain engine hỗ trợ.
     type: "function",
     name: "selfPermit",
     stateMutability: "payable",
@@ -108,29 +107,60 @@ const swapRouterAbi = [
   },
 ] as const;
 
-export interface SepoliaQuoteArgs {
+export interface V3QuoteArgs {
+  chainId: number;
   client: PublicClient;
   tokenIn: RouteToken;
   tokenOut: RouteToken;
-  /** true khi người dùng bán ETH native (path vẫn dùng WETH). */
+  /** true khi người dùng bán native (path vẫn dùng wrapped). */
   nativeIn: boolean;
-  /** true khi người dùng muốn nhận ETH native (thêm unwrapWETH9). */
+  /** true khi người dùng muốn nhận native (thêm unwrapWETH9). */
   nativeOut: boolean;
   amountInWei: bigint;
   fromAddress: Address;
   slippageBps: number;
 }
 
-/** Encode path cho engine: native được thay bằng WETH. */
-function toWrapped(token: RouteToken, nativeSide: boolean): RouteToken {
+/** Encode path cho engine: native được thay bằng wrapped của chain. */
+function toWrapped(
+  token: RouteToken,
+  nativeSide: boolean,
+  wrappedNative: RouteToken,
+): RouteToken {
   if (!nativeSide) return token;
-  return { address: WETH_SEPOLIA, symbol: "WETH", decimals: 18 };
+  return wrappedNative;
 }
 
-export async function fetchSepoliaQuote(
-  args: SepoliaQuoteArgs,
+/** Giá USD tham chiếu cho native + hai token của cặp swap (batch 1 request). */
+async function fetchUsdPrices(
+  chainId: number,
+  nativeIn: boolean,
+  nativeOut: boolean,
+  tokenIn: RouteToken,
+  tokenOut: RouteToken,
+): Promise<Record<string, number>> {
+  const nativeKey = NATIVE_LLAMA_KEY[chainId];
+  const keys = [
+    nativeKey,
+    nativeIn || nativeOut ? null : toLlamaKey(chainId, "erc20", tokenIn.address),
+    toLlamaKey(chainId, "erc20", tokenOut.address),
+  ].filter((k): k is string => !!k);
+
+  try {
+    const prices = await fetchCurrentPrices(keys);
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(prices)) out[k] = v.usd;
+    return out;
+  } catch {
+    return {}; // Giá USD là thông tin hiển thị — thiếu thì để 0, không chặn swap.
+  }
+}
+
+export async function fetchUniswapV3Quote(
+  args: V3QuoteArgs,
 ): Promise<SwapQuote> {
   const {
+    chainId,
     client,
     nativeIn,
     nativeOut,
@@ -139,32 +169,45 @@ export async function fetchSepoliaQuote(
     slippageBps,
   } = args;
 
-  const tokenIn = toWrapped(args.tokenIn, nativeIn);
-  const tokenOut = toWrapped(args.tokenOut, nativeOut);
+  const config = getV3ChainConfig(chainId);
+  if (!config) {
+    throw new Error(`Chain ${chainId} không có Uniswap V3 cho engine nội bộ.`);
+  }
+  const wrappedNative = config.wrappedNative;
+
+  const tokenIn = toWrapped(args.tokenIn, nativeIn, wrappedNative);
+  const tokenOut = toWrapped(args.tokenOut, nativeOut, wrappedNative);
 
   if (tokenIn.address.toLowerCase() === tokenOut.address.toLowerCase()) {
     throw new Error(
-      "ETH và WETH là cùng một tài sản — dùng wrap/unwrap thay vì swap.",
+      "Native và wrapped là cùng một tài sản — dùng wrap/unwrap thay vì swap.",
     );
   }
 
-  const candidates = buildCandidates(tokenIn, tokenOut, CONNECTORS);
+  const candidates = buildCandidates(
+    tokenIn,
+    tokenOut,
+    config.connectors,
+  );
 
-  // Gas price + tỷ giá native/tokenOut chạy song song với batch quote:
-  // cả hai chỉ dùng để chấm điểm net output, không phụ thuộc kết quả quote.
-  const [gasPriceWei, nativePerTokenOut] = await Promise.all([
+  // Sepolia không có giá USD thật — mọi trường USD giữ 0 như trước.
+  const hasRealUsd = chainId !== sepolia.id;
+
+  // Gas price + tỷ giá wrapped/tokenOut + giá USD chạy song song với nhau:
+  // hai thứ đầu dùng để chấm điểm net output, cái sau chỉ để hiển thị.
+  const [gasPriceWei, nativePerTokenOut, usd] = await Promise.all([
     client.getGasPrice().catch(() => 0n),
-    tokenOut.address.toLowerCase() === WETH_SEPOLIA.toLowerCase()
+    tokenOut.address.toLowerCase() === wrappedNative.address.toLowerCase()
       ? Promise.resolve(1)
-      : fetchMidRate(client, tokenOut, {
-          address: WETH_SEPOLIA,
-          symbol: "WETH",
-          decimals: 18,
-        }),
+      : fetchMidRate(client, config.factory, tokenOut, wrappedNative),
+    hasRealUsd
+      ? fetchUsdPrices(chainId, nativeIn, nativeOut, tokenIn, tokenOut)
+      : Promise.resolve({} as Record<string, number>),
   ]);
 
   const routing = await findBestRoute(
     client,
+    { factory: config.factory, quoterV2: config.quoterV2 },
     candidates,
     amountInWei,
     gasPriceWei,
@@ -183,7 +226,7 @@ export async function fetchSepoliaQuote(
     args: [
       {
         path: best.encodedPath,
-        // Nhận ETH native: giữ WETH ở router rồi unwrap về ví trong cùng tx.
+        // Nhận native: giữ wrapped ở router rồi unwrap về ví trong cùng tx.
         recipient: nativeOut ? ADDRESS_THIS : fromAddress,
         amountIn: amountInWei,
         amountOutMinimum: amountOutMin,
@@ -216,15 +259,37 @@ export async function fetchSepoliaQuote(
     pool: best.pools[i],
   }));
 
+  // Giá trị USD hiển thị: nhân giá llama với lượng token con người.
+  const nativeUsd = usd[NATIVE_LLAMA_KEY[chainId] ?? ""] ?? 0;
+  const tokenInUsdKey =
+    nativeIn || tokenIn.address.toLowerCase() === wrappedNative.address.toLowerCase()
+      ? NATIVE_LLAMA_KEY[chainId]
+      : toLlamaKey(chainId, "erc20", tokenIn.address);
+  const tokenOutUsdKey =
+    nativeOut || tokenOut.address.toLowerCase() === wrappedNative.address.toLowerCase()
+      ? NATIVE_LLAMA_KEY[chainId]
+      : toLlamaKey(chainId, "erc20", tokenOut.address);
+  const tokenInUsd = usd[tokenInUsdKey ?? ""] ?? 0;
+  const tokenOutUsd = usd[tokenOutUsdKey ?? ""] ?? 0;
+
+  const gasLimit = ((best.gasEstimate + 80_000n) * 13n) / 10n;
+  const inHuman = Number(amountInWei) / 10 ** tokenIn.decimals;
+  const outHuman = Number(best.amountOut) / 10 ** tokenOut.decimals;
+  // gasUsd theo gasLimit của tx (đã gồm buffer router + 30%) — cận trên trung
+  // thực; so sánh với LI.FI ở tầng quoteSource cùng cơ số này.
+  const gasUsd =
+    nativeUsd > 0
+      ? (Number(gasLimit * gasPriceWei) / 1e18) * nativeUsd
+      : 0;
+
   return {
     tool: `Uniswap V3 · ${best.candidate.fees.length} hop`,
     toAmount: best.amountOut.toString(),
     toAmountMin: amountOutMin.toString(),
-    approvalAddress: SWAP_ROUTER_02,
-    // Testnet không có giá USD thật — price impact vẫn tính được từ pool.
-    fromAmountUsd: 0,
-    toAmountUsd: 0,
-    gasUsd: 0,
+    approvalAddress: config.swapRouter02,
+    fromAmountUsd: tokenInUsd > 0 ? inHuman * tokenInUsd : 0,
+    toAmountUsd: tokenOutUsd > 0 ? outHuman * tokenOutUsd : 0,
+    gasUsd,
     priceImpactPct: best.priceImpactPct,
     lpFeePct: best.lpFeePct,
     midRate: best.midRate > 0 ? best.midRate : null,
@@ -236,14 +301,17 @@ export async function fetchSepoliaQuote(
     // Giữ lại sub-call để tầng permit dựng lại multicall có selfPermit ở đầu.
     plan: { deadline, calls: inner, supportsSelfPermit: true },
     txRequest: {
-      to: SWAP_ROUTER_02,
+      to: config.swapRouter02,
       data,
       value: nativeIn ? amountInWei : 0n,
       // Quoter chỉ đo phần swap; cộng overhead router + 30% buffer.
-      gasLimit: ((best.gasEstimate + 80_000n) * 13n) / 10n,
+      gasLimit,
     },
   };
 }
+
+/** Hằng số ADDRESS_THIS của SwapRouter02 — giữ output tại router để unwrap. */
+const ADDRESS_THIS = "0x0000000000000000000000000000000000000002" as Address;
 
 /**
  * Dựng lại calldata swap với `selfPermit` chèn lên đầu multicall, tức là permit
@@ -301,6 +369,3 @@ export function withSelfPermit(
     },
   };
 }
-
-/** Địa chỉ WETH của Sepolia — UI cần để nhận diện cặp ETH/WETH. */
-export { WETH_SEPOLIA };
