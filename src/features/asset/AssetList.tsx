@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useChainId } from "wagmi";
 import { useAssets } from "./useBalances";
 import { usePrices } from "./usePrices";
+import { visibleAssetRows } from "./assetFilter";
 import { llamaKeyForAsset } from "@/lib/marketData";
 import { ImportToken } from "./ImportToken";
 import { formatBalance, formatUsd } from "@/lib/format";
@@ -18,13 +19,26 @@ export function AssetList() {
   const { rows, isLoading, isError, refetch, addToken, removeToken } =
     useAssets();
   const [importing, setImporting] = useState(false);
+  // Tìm trong TOÀN BỘ danh sách token chuẩn (kể cả số dư 0) — xem assetFilter.
+  const [search, setSearch] = useState("");
 
+  const visible = useMemo(
+    () => visibleAssetRows(rows, search),
+    [rows, search],
+  );
+
+  // Danh sách ĐANG SỞ HỮU (bộ lọc khi không search) — dùng cho "Tổng tài
+  // sản": tổng phải theo ví, không được nhảy theo ô tìm kiếm.
+  const holdings = useMemo(() => visibleAssetRows(rows, ""), [rows]);
+
+  // Giá cho cả danh sách đang hiển thị lẫn danh sách sở hữu (union) — tổng
+  // luôn có đủ giá kể cả khi đang search token khác.
   const llamaKeys = useMemo(() => {
-    const keys = rows
+    const keys = [...holdings, ...visible]
       .map((r) => llamaKeyForAsset(chainId, r))
       .filter((k): k is string => !!k);
     return Array.from(new Set(keys)).sort();
-  }, [rows, chainId]);
+  }, [holdings, visible, chainId]);
 
   const keyForRow = (r: (typeof rows)[number]) =>
     llamaKeyForAsset(chainId, r);
@@ -32,13 +46,13 @@ export function AssetList() {
   const { data: prices } = usePrices(llamaKeys);
 
   const totalUsd = useMemo(() => {
-    return rows.reduce((sum, r) => {
+    return holdings.reduce((sum, r) => {
       const lk = llamaKeyForAsset(chainId, r);
       const price = lk ? (prices?.[lk]?.usd ?? 0) : 0;
       const amount = Number(formatBalanceRaw(r.balance, r.decimals));
       return sum + amount * price;
     }, 0);
-  }, [rows, prices, chainId]);
+  }, [holdings, prices, chainId]);
 
   if (isLoading) {
     return (
@@ -74,7 +88,7 @@ export function AssetList() {
   }
 
   return (
-    <Reveal className="space-y-4" watch={rows.length}>
+    <Reveal className="space-y-4" watch={visible.length}>
       {/* Hero tổng tài sản */}
       <Card highlight className="relative overflow-hidden">
         <p className="text-xs uppercase tracking-widest text-neutral-500">
@@ -88,9 +102,35 @@ export function AssetList() {
         </p>
       </Card>
 
+      {/* Tìm kiếm toàn bộ danh sách token chuẩn + danh sách token hiển thị */}
+      <div className="relative">
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Tìm token (tên, mã, địa chỉ)…"
+          className="w-full rounded-2xl border border-white/[0.07] bg-white/[0.03] px-4 py-2.5 text-sm text-white outline-none transition-colors placeholder:text-neutral-600 focus:border-accent1/50"
+        />
+        {search && (
+          <button
+            onClick={() => setSearch("")}
+            aria-label="Xóa tìm kiếm"
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full px-2 py-0.5 text-xs text-neutral-500 hover:bg-white/10 hover:text-white"
+          >
+            ✕
+          </button>
+        )}
+      </div>
+
       {/* Danh sách token */}
       <div className="space-y-2">
-        {rows.map((r) => {
+        {visible.length === 0 && (
+          <p className="py-6 text-center text-sm text-neutral-500">
+            {search
+              ? "Không tìm thấy token nào khớp từ khoá."
+              : "Chưa có token nào có số dư — bấm Khám phá hoặc Import token."}
+          </p>
+        )}
+        {visible.map((r) => {
           const lk = keyForRow(r);
           const info = lk ? prices?.[lk] : undefined;
           const price = info?.usd ?? 0;
@@ -114,6 +154,7 @@ export function AssetList() {
                   chainId={chainId}
                   address={r.kind === "erc20" ? r.address : undefined}
                   symbol={r.symbol}
+                  logoUri={r.logoUri}
                 />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
@@ -163,10 +204,18 @@ export function AssetList() {
       {importing ? (
         <ImportToken onAdd={addToken} onClose={() => setImporting(false)} />
       ) : (
-        <div className="flex justify-between">
-          <Button variant="secondary" onClick={() => setImporting(true)}>
-            ＋ Import token
-          </Button>
+        <div className="flex flex-wrap justify-between gap-2">
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={() => setImporting(true)}>
+              ＋ Import token
+            </Button>
+            <Link
+              href="/app/explore"
+              className="inline-flex items-center rounded-2xl px-3.5 py-2.5 text-sm font-medium text-accent1 transition-colors hover:brightness-125"
+            >
+              🔥 Khám phá
+            </Link>
+          </div>
           <Button variant="ghost" onClick={refetch}>
             Làm mới
           </Button>

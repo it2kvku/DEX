@@ -6,23 +6,27 @@ import { CryptoIcon } from "@/components/CryptoIcon";
 import type { Address } from "viem";
 
 /**
- * Logo token: Trust Wallet CDN trước, fallback avatar/icon màu.
+ * Logo token: Trust Wallet CDN trước, logo từ danh sách chuẩn (vd Uniswap
+ * list) làm phương án 2, cuối cùng fallback avatar/icon màu.
  */
 export function TokenLogo({
   chainId,
   address,
   symbol,
   size = 38,
+  logoUri,
   className = "",
 }: {
   chainId: number;
   address?: Address;
   symbol: string;
   size?: number;
+  /** Logo URI từ token list — dùng khi CDN Trust Wallet không có token này. */
+  logoUri?: string;
   className?: string;
 }) {
   const [failed, setFailed] = useState(false);
-  const url = tokenLogoUrl(chainId, address);
+  const url = logoUri ?? tokenLogoUrl(chainId, address);
 
   if (!url || failed) {
     return (
@@ -33,6 +37,7 @@ export function TokenLogo({
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
+      key={url}
       src={url}
       alt=""
       width={size}

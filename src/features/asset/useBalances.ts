@@ -15,6 +15,8 @@ export interface AssetRow {
   balance: bigint;
   coingeckoId: string | null;
   isCustom?: boolean;
+  /** Logo từ danh sách chuẩn (vd Uniswap list) — fallback khi CDN không có. */
+  logoUri?: string;
 }
 
 /**
@@ -68,6 +70,7 @@ export function useAssets() {
       balance,
       coingeckoId: t.coingeckoId,
       isCustom: customSet.has(t.address.toLowerCase()),
+      logoUri: t.logoUri,
     });
   });
 

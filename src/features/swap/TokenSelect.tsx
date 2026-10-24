@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { CryptoIcon } from "@/components/CryptoIcon";
 import { formatBalance } from "@/lib/format";
@@ -11,7 +11,8 @@ export type TokenChoice = "native" | `0x${string}`;
 
 /**
  * Nút chọn token dạng pill (icon + symbol + mũi tên) mở dropdown
- * danh sách token của chain hiện tại kèm số dư.
+ * danh sách token của chain hiện tại kèm số dư. Danh sách giờ chứa cả
+ * token list chuẩn (hàng trăm token) nên dropdown có ô lọc riêng.
  */
 export function TokenSelect({
   value,
@@ -28,6 +29,7 @@ export function TokenSelect({
   placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -45,7 +47,26 @@ export function TokenSelect({
     r.kind === "native" ? "native" : (r.address as `0x${string}`);
 
   const selected = rows.find((r) => choiceOf(r) === value);
-  const options = rows.filter((r) => choiceOf(r) !== exclude);
+
+  const options = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return rows
+      .filter((r) => choiceOf(r) !== exclude)
+      .filter((r) => {
+        if (!q) {
+          // Không search: ưu tiên token người dùng hay dùng — có số dư lên
+          // trước, rồi native, rồi phần còn lại theo thứ tự danh sách.
+          return r.kind === "native" || r.balance > 0n || r.isCustom;
+        }
+        return (
+          r.symbol.toLowerCase().includes(q) ||
+          r.name.toLowerCase().includes(q) ||
+          (r.address?.toLowerCase() ?? "").includes(q)
+        );
+      })
+      .slice(0, 60);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, exclude, query]);
 
   return (
     <div ref={ref} className="relative shrink-0">
@@ -69,44 +90,56 @@ export function TokenSelect({
       </button>
 
       {open && (
-        <div className="glass absolute right-0 z-50 mt-2 max-h-64 w-60 overflow-y-auto rounded-2xl py-1.5 shadow-2xl">
-          {options.length === 0 ? (
-            <p className="px-3.5 py-4 text-center text-xs text-neutral-500">
-              Không còn token nào khác.
-            </p>
-          ) : (
-            options.map((r) => {
-              const choice = choiceOf(r);
-              const active = choice === value;
-              return (
-                <button
-                  key={`${r.kind}-${r.address ?? "native"}`}
-                  onClick={() => {
-                    onChange(choice);
-                    setOpen(false);
-                  }}
-                  className={`flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left transition-colors ${
-                    active
-                      ? "bg-white/[0.08] text-white"
-                      : "text-neutral-200 hover:bg-white/[0.05]"
-                  }`}
-                >
-                  <CryptoIcon symbol={r.symbol} size={26} />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">
-                      {r.symbol}
+        <div className="glass absolute right-0 z-50 mt-2 w-60 overflow-hidden rounded-2xl py-1.5 shadow-2xl">
+          <div className="px-2 pb-1.5">
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Tìm token…"
+              className="w-full rounded-xl border border-white/10 bg-black/30 px-2.5 py-1.5 text-xs text-white outline-none placeholder:text-neutral-600 focus:border-accent1/60"
+            />
+          </div>
+          <div className="max-h-56 overflow-y-auto">
+            {options.length === 0 ? (
+              <p className="px-3.5 py-4 text-center text-xs text-neutral-500">
+                Không tìm thấy token.
+              </p>
+            ) : (
+              options.map((r) => {
+                const choice = choiceOf(r);
+                const active = choice === value;
+                return (
+                  <button
+                    key={`${r.kind}-${r.address ?? "native"}`}
+                    onClick={() => {
+                      onChange(choice);
+                      setOpen(false);
+                      setQuery("");
+                    }}
+                    className={`flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left transition-colors ${
+                      active
+                        ? "bg-white/[0.08] text-white"
+                        : "text-neutral-200 hover:bg-white/[0.05]"
+                    }`}
+                  >
+                    <CryptoIcon symbol={r.symbol} size={26} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium">
+                        {r.symbol}
+                      </span>
+                      <span className="block truncate text-[11px] text-neutral-500">
+                        {r.name}
+                      </span>
                     </span>
-                    <span className="block truncate text-[11px] text-neutral-500">
-                      {r.name}
+                    <span className="font-mono text-xs text-neutral-400">
+                      {formatBalance(r.balance, r.decimals, 4)}
                     </span>
-                  </span>
-                  <span className="font-mono text-xs text-neutral-400">
-                    {formatBalance(r.balance, r.decimals, 4)}
-                  </span>
-                </button>
-              );
-            })
-          )}
+                  </button>
+                );
+              })
+            )}
+          </div>
         </div>
       )}
     </div>

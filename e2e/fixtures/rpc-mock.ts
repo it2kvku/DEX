@@ -356,6 +356,48 @@ export async function mockChain(page: Page, fallbackChainId = 1) {
     }),
   );
 
+  // --- GeckoTerminal (trang Khám phá + stats token): pool giả ổn định ---
+  await page.route("**/api.geckoterminal.com/**", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      headers: CORS_HEADERS,
+      body: JSON.stringify({
+        data: [
+          {
+            id: "eth_0x0000000000000000000000000000000000000011_0x0000000000000000000000000000000000000012",
+            attributes: {
+              name: "MOCK/WETH",
+              reserve_in_usd: "1200000",
+              volume_usd: { h24: "340000" },
+              price_change_percentage: { h24: 12.5 },
+              transactions: { h24: { total: 4210 } },
+            },
+            relationships: {
+              dex: { data: { id: "uniswap_v3" } },
+              base_token: {
+                data: {
+                  id: "eth_0x0000000000000000000000000000000000000011",
+                },
+              },
+            },
+          },
+        ],
+      }),
+    }),
+  );
+
+  // --- Danh sách token chuẩn Uniswap: trả rỗng (hermetic, không gọi mạng) ---
+  // AssetList/token select chỉ rơi về default + custom như trước P2.
+  await page.route("**/tokens.uniswap.org/**", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      headers: CORS_HEADERS,
+      body: JSON.stringify({ tokens: [] }),
+    }),
+  );
+
   // --- WalletConnect relay: chặn để modal không mở socket ra ngoài ---
   await page.route(/walletconnect\.(com|org)|reown\.com/, (route) =>
     route.abort(),

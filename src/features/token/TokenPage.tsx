@@ -20,7 +20,7 @@ import { BrandLogo } from "@/components/BrandLogo";
 import { NetworkSelector } from "@/components/NetworkSelector";
 import { WalletButton } from "@/components/WalletButton";
 import { TokenLogo } from "@/components/TokenLogo";
-import { Alert, Card } from "@/components/ui";
+import { Alert, Card, Skeleton } from "@/components/ui";
 import { WidgetErrorBoundary } from "@/components/WidgetErrorBoundary";
 import { Swap } from "@/features/swap/Swap";
 import type { TokenChoice } from "@/features/swap/TokenSelect";
@@ -42,6 +42,7 @@ export function TokenPage({ addressParam }: { addressParam: string }) {
     change24h,
     pricesLoading,
     notFound,
+    resolving,
     chartAvailable,
   } = useTokenDetail(addressParam);
 
@@ -98,6 +99,20 @@ export function TokenPage({ addressParam }: { addressParam: string }) {
             ← Về ví
           </Link>
         </Card>
+      </TokenShell>
+    );
+  }
+
+  // Token lạ (link từ Khám phá, token chưa import): đang đọc metadata on-chain.
+  if (resolving || !detail) {
+    return (
+      <TokenShell>
+        <div className="mx-auto w-full max-w-6xl px-4 pt-24 sm:px-6">
+          <Card className="mx-auto flex max-w-lg items-center justify-center gap-2 text-sm text-neutral-400">
+            <Skeleton className="h-4 w-4 animate-pulse rounded-full" />
+            Đang đọc thông tin token trên mạng…
+          </Card>
+        </div>
       </TokenShell>
     );
   }

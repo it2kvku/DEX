@@ -66,6 +66,7 @@ const contentSecurityPolicy = [
     "https://api.coingecko.com",
     "https://coins.llama.fi",
     "https://api.geckoterminal.com",
+    "https://tokens.uniswap.org",
     "https://api.etherscan.io",
     "https://li.quest",
     "https://*.walletconnect.com",

@@ -1,8 +1,9 @@
 "use client";
 
 import { useMemo } from "react";
-import { useChainId } from "wagmi";
+import { useChainId, useReadContracts } from "wagmi";
 import type { Address } from "viem";
+import { erc20Abi } from "@/lib/abi/erc20";
 import { defaultTokens, type TokenInfo } from "@/lib/tokens";
 import { isReferenceChart, toLlamaKey } from "@/lib/marketData";
 import { usePrices } from "@/features/asset/usePrices";
@@ -19,6 +20,8 @@ export interface TokenDetail {
   isReferenceChart: boolean;
   chainName: string;
 }
+
+const HEX_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 
 function findToken(
   chainId: number,
@@ -59,14 +62,59 @@ function findToken(
   };
 }
 
+/**
+ * Chi tiết token cho trang /app/token/{address|native}.
+ *
+ * Token không có trong danh sách (vd link từ trang Khám phá tới token meme
+ * chưa ai import) vẫn mở được: đọc symbol/name/decimals trực tiếp on-chain
+ * qua multicall — đúng metadata của contract, không cần tin nguồn nào.
+ */
 export function useTokenDetail(addressParam: string) {
   const chainId = useChainId();
   const { tokens } = useTokenList(chainId);
 
-  const detail = useMemo(
+  const listed = useMemo(
     () => findToken(chainId, addressParam, tokens),
     [chainId, addressParam, tokens],
   );
+
+  const isUnknownErc20 =
+    !listed && addressParam !== "native" && HEX_ADDRESS_RE.test(addressParam);
+
+  const onchain = useReadContracts({
+    allowFailure: true,
+    contracts: isUnknownErc20
+      ? (["symbol", "name", "decimals"] as const).map((functionName) => ({
+          address: addressParam as Address,
+          abi: erc20Abi,
+          functionName,
+        }))
+      : [],
+    query: { enabled: isUnknownErc20, retry: 1 },
+  });
+
+  const detail = useMemo<TokenDetail | null>(() => {
+    if (listed) return listed;
+    if (!isUnknownErc20 || !onchain.data) return null;
+
+    const [symbolRes, nameRes, decimalsRes] = onchain.data;
+    if (symbolRes.status !== "success" || decimalsRes.status !== "success") {
+      return null; // Không phải ERC-20 (hoặc proxy trả lỗi) -> notFound.
+    }
+    const address = addressParam as Address;
+    return {
+      kind: "erc20",
+      address,
+      symbol: String(symbolRes.result),
+      name:
+        nameRes.status === "success" ? String(nameRes.result) : String(symbolRes.result),
+      decimals: Number(decimalsRes.result),
+      llamaKey: toLlamaKey(chainId, "erc20", address),
+      isReferenceChart: isReferenceChart(chainId),
+      chainName:
+        supportedChains.find((c) => c.id === chainId)?.name ?? `Chain ${chainId}`,
+    };
+  }, [listed, isUnknownErc20, onchain.data, addressParam, chainId]);
 
   const prices = usePrices(detail?.llamaKey ? [detail.llamaKey] : []);
   const priceInfo = detail?.llamaKey
@@ -78,7 +126,9 @@ export function useTokenDetail(addressParam: string) {
     priceUsd: priceInfo?.usd ?? null,
     change24h: priceInfo?.change24h,
     pricesLoading: prices.isLoading,
-    notFound: !detail,
+    // Đang resolve on-chain thì chưa kết luận "không tìm thấy".
+    notFound: !detail && !isUnknownErc20 && !(isUnknownErc20 && onchain.isLoading),
+    resolving: isUnknownErc20 && onchain.isLoading,
     chartAvailable: !!detail?.llamaKey,
   };
 }
