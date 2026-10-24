@@ -44,7 +44,9 @@ function alchemyUrl(chainId: number): string | null {
  * RPC công khai dự phòng cho mỗi chain (nguồn thứ hai khi Alchemy nghẽn/sập).
  */
 // Chỉ dùng các RPC cho phép CORS từ browser (llamarpc/ankr chặn origin lạ).
-const publicFallbackRpc: Record<number, string[]> = {
+// Exported cho RPC proxy trên Worker (src/app/rpc/[chainId]/route.ts) —
+// danh sách upstream phải đồng bộ với transport phía client.
+export const publicFallbackRpc: Record<number, string[]> = {
   [mainnet.id]: [
     "https://ethereum-rpc.publicnode.com",
     "https://eth.drpc.org",
@@ -72,16 +74,41 @@ const publicFallbackRpc: Record<number, string[]> = {
 };
 
 /**
+ * Build vinext/Cloudflare bật RPC proxy same-origin (vite.config.ts set flag
+ * này lúc build). Khi bật, transport đầu tiên của mọi chain là `/rpc/{chainId}`
+ * do Worker serve — Alchemy key nằm trong secret server-side thay vì trong
+ * bundle client. Build Next (next dev/next build) không set flag → dùng
+ * NEXT_PUBLIC_ALCHEMY_API_KEY trực tiếp như cũ.
+ */
+const RPC_PROXY_ENABLED = process.env.NEXT_PUBLIC_RPC_PROXY === "1";
+
+function proxyRpcUrl(chainId: number): string {
+  // Browser cần URL tuyệt đối (fetch không có base khi SSR); phía server
+  // transport không bao giờ được gọi (mọi query chạy client-side) nên URL
+  // tương đối ở đó vô hại.
+  if (typeof window !== "undefined") {
+    return new URL(`/rpc/${chainId}`, window.location.origin).toString();
+  }
+  return `/rpc/${chainId}`;
+}
+
+/**
  * Tạo transport có fallback cho từng chain:
- * Alchemy (nếu có key) đứng trước, rồi tới các RPC công khai.
+ * - Build vinext: Worker proxy đứng trước, rồi tới các RPC công khai.
+ * - Build Next: Alchemy (nếu có key) đứng trước, rồi tới các RPC công khai.
  * Nếu một node lỗi/nghẽn, viem tự chuyển sang node kế tiếp.
  */
 export function buildTransports(): Record<number, Transport> {
   const transports: Record<number, Transport> = {};
   for (const chain of supportedChains) {
     const urls: string[] = [];
-    const primary = alchemyUrl(chain.id);
-    if (primary) urls.push(primary);
+    if (RPC_PROXY_ENABLED) {
+      // Proxy đã nắm Alchemy key server-side — không nhân đôi key client.
+      urls.push(proxyRpcUrl(chain.id));
+    } else {
+      const primary = alchemyUrl(chain.id);
+      if (primary) urls.push(primary);
+    }
     urls.push(...(publicFallbackRpc[chain.id] ?? []));
 
     transports[chain.id] = fallback(
