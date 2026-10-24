@@ -1,10 +1,12 @@
 // Script tạm: cắt viền trong suốt của logo_nobg.png và xuất các asset thương hiệu.
-const sharp = require("sharp");
-const fs = require("fs");
-const path = require("path");
+import sharp from "sharp";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const src = path.resolve(__dirname, "logo_nobg.png");
-const outDir = path.resolve(__dirname, "public/brand");
+const rootDir = path.dirname(fileURLToPath(import.meta.url));
+const src = path.resolve(rootDir, "logo_nobg.png");
+const outDir = path.resolve(rootDir, "public/brand");
 fs.mkdirSync(outDir, { recursive: true });
 
 (async () => {
@@ -47,7 +49,7 @@ fs.mkdirSync(outDir, { recursive: true });
     await sharp(icon)
       .resize(size, size)
       .png({ compressionLevel: 9 })
-      .toFile(path.resolve(__dirname, "src/app", file));
+      .toFile(path.resolve(rootDir, "src/app", file));
   }
 
   console.log("done");
