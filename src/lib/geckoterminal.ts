@@ -314,7 +314,8 @@ interface GeckoTrendingResp {
       name: string;
       reserve_in_usd?: string;
       volume_usd?: { h24?: string };
-      price_change_percentage?: { h24?: number | null };
+      /** GeckoTerminal trả số này dạng string — đổi sang number ở tầng parse. */
+      price_change_percentage?: { h24?: number | string | null };
       transactions?: { h24?: { total?: number } };
     };
     relationships?: {
@@ -345,12 +346,18 @@ export async function fetchTrendingPools(
       const baseId = p.relationships?.base_token?.data?.id ?? "";
       const address = baseId.split("_")[1];
       if (!address?.startsWith("0x")) return null;
+      // GeckoTerminal trả phần trăm đổi giá là STRING (như mọi số khác của
+      // nó) — phải đổi sang number kịp trước khi UI gọi .toFixed().
+      const rawChange = p.attributes.price_change_percentage?.h24;
       return {
         id: p.id,
         name: p.attributes.name,
         dex: p.relationships?.dex?.data?.id ?? "DEX",
         baseTokenAddress: address as Address,
-        change24hPct: p.attributes.price_change_percentage?.h24 ?? null,
+        change24hPct:
+          rawChange === undefined || rawChange === null
+            ? null
+            : num(String(rawChange)),
         volume24hUsd: num(p.attributes.volume_usd?.h24),
         reserveUsd: num(p.attributes.reserve_in_usd),
         tx24h: p.attributes.transactions?.h24?.total ?? null,
