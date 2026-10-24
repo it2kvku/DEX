@@ -1,6 +1,6 @@
 import type { Address } from "viem";
 import { getAddress } from "viem";
-import { mainnet, bsc, polygon, arbitrum, sepolia } from "wagmi/chains";
+import { mainnet, bsc, polygon, arbitrum, base, sepolia } from "wagmi/chains";
 import { SEPOLIA_LLAMA_FALLBACK } from "@/lib/marketData";
 
 const BASE = "https://api.geckoterminal.com/api/v2";
@@ -11,6 +11,7 @@ export const GECKO_NETWORK: Partial<Record<number, string>> = {
   [bsc.id]: "bsc",
   [polygon.id]: "polygon_pos",
   [arbitrum.id]: "arbitrum",
+  [base.id]: "base",
   [sepolia.id]: "eth",
 };
 
@@ -290,6 +291,72 @@ export async function fetchCoinAbout(coinId: string): Promise<{
       ? `https://twitter.com/${data.links.twitter_screen_name}`
       : null,
   };
+}
+
+/** Một pool đang "nóng" cho trang Khám phá. */
+export interface TrendingPool {
+  id: string;
+  /** Tên cặp, vd "AERO/WETH". */
+  name: string;
+  dex: string;
+  /** Địa chỉ token gốc (phần trước của cặp) — để link sang trang chi tiết. */
+  baseTokenAddress: Address;
+  change24hPct: number | null;
+  volume24hUsd: number | null;
+  reserveUsd: number | null;
+  tx24h: number | null;
+}
+
+interface GeckoTrendingResp {
+  data: Array<{
+    id: string;
+    attributes: {
+      name: string;
+      reserve_in_usd?: string;
+      volume_usd?: { h24?: string };
+      price_change_percentage?: { h24?: number | null };
+      transactions?: { h24?: { total?: number } };
+    };
+    relationships?: {
+      dex?: { data?: { id?: string } };
+      base_token?: { data?: { id?: string } };
+    };
+  }>;
+}
+
+/**
+ * Pool có hoạt động cao nhất trên chain (GeckoTerminal trending_pools).
+ * Trả kèm địa chỉ token gốc để link vào trang chi tiết token của app.
+ */
+export async function fetchTrendingPools(
+  chainId: number,
+  duration: "5m" | "1h" | "6h" | "24h" = "24h",
+): Promise<TrendingPool[]> {
+  const network = geckoNetwork(chainId);
+  if (!network) return [];
+
+  const json = await geckoFetch<GeckoTrendingResp>(
+    `/networks/${network}/trending_pools?duration=${duration}&page=1`,
+  );
+
+  return json.data
+    .map((p) => {
+      // base_token id có dạng "{network}_{address}".
+      const baseId = p.relationships?.base_token?.data?.id ?? "";
+      const address = baseId.split("_")[1];
+      if (!address?.startsWith("0x")) return null;
+      return {
+        id: p.id,
+        name: p.attributes.name,
+        dex: p.relationships?.dex?.data?.id ?? "DEX",
+        baseTokenAddress: address as Address,
+        change24hPct: p.attributes.price_change_percentage?.h24 ?? null,
+        volume24hUsd: num(p.attributes.volume_usd?.h24),
+        reserveUsd: num(p.attributes.reserve_in_usd),
+        tx24h: p.attributes.transactions?.h24?.total ?? null,
+      } satisfies TrendingPool;
+    })
+    .filter((p): p is TrendingPool => p !== null);
 }
 
 function num(v: string | undefined | null): number | null {
