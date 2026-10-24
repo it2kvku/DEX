@@ -53,12 +53,19 @@ jobs:
         if: always()
         run: npm test
 
-      - name: Build
+      - name: Build (Next)
         if: always()
         run: npm run build
 
+      # Build vinext (Vite + Cloudflare Worker) — pipeline deploy thật.
+      # Hai build là hai chương trình khác nhau: Next xanh không nói gì được
+      # Worker xanh (đã có lần thực tế: rule headers bị bỏ qua ở pipeline kia).
+      - name: Build (vinext)
+        if: always()
+        run: npm run build:vinext
+
   e2e:
-    name: E2E (Playwright)
+    name: E2E Next (Playwright)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -87,5 +94,35 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+  e2e-vinext:
+    name: E2E vinext/Worker (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Cài Chromium cho Playwright
+        run: npx playwright install --with-deps chromium
+
+      # webServer của playwright.vinext.config.ts tự build:vinext rồi chạy
+      # `vite preview` — Worker thật trong workerd, tức đúng runtime sẽ deploy
+      # lên Cloudflare. Không cần secret nào: e2e mock toàn bộ tầng mạng.
+      - name: Chạy smoke test trên Worker
+        run: npx playwright test -c playwright.vinext.config.ts
+
+      - name: Lưu Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-vinext
           path: playwright-report/
           retention-days: 7

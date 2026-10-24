@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Page, Route } from "@playwright/test";
 import { decodeFunctionData, encodeFunctionResult, type Hex } from "viem";
 
 /**
@@ -30,11 +30,18 @@ const CORS_HEADERS = {
 const ZERO_WORD =
   "0x0000000000000000000000000000000000000000000000000000000000000000" as Hex;
 
-/** Selector 4 byte của các hàm ERC-20 mà mock biết trả lời. */
+/** Selector 4 byte của các hàm mà mock biết trả lời. */
 const SELECTOR = {
   balanceOf: "0x70a08231",
   allowance: "0xdd62ed3e",
   decimals: "0x313ce567",
+  /**
+   * viem ≥ 2.55 đọc số dư native QUA Multicall3.getEthBalance thay vì gọi
+   * eth_getBalance trực tiếp (mọi eth_call gộp về một chỗ). Không trả lời
+   * selector này thì useBalance của app báo "Execution reverted" — bug giả
+   * vì mock thiếu hàm, không phải app lỗi.
+   */
+  getEthBalance: "0x4d2301cc",
 } as const;
 
 const MULTICALL3 = "0xca11bde05977b3631167028862be2a173976ca11";
@@ -70,6 +77,14 @@ const aggregate3Abi = [
 
 /** Số dư giả: đủ lớn để nút "Tiếp tục" không bị chặn bởi "Số dư không đủ". */
 const FAKE_NATIVE_BALANCE = "0x2386f26fc10000"; // 0.01 ETH
+/**
+ * Cùng số dư nhưng pad đủ 32 byte: getEthBalance đi qua multicall aggregate3
+ * nên returnData phải là từ ABI uint256 chuẩn — hex 7 byte thô sẽ bị viem từ
+ * chối với lỗi "Data size of 7 bytes is too small".
+ */
+const FAKE_NATIVE_BALANCE_ABI = `0x${"0".repeat(
+  64 - (FAKE_NATIVE_BALANCE.length - 2),
+)}${FAKE_NATIVE_BALANCE.slice(2)}` as Hex;
 /** balanceOf trả 1000 đơn vị token (đúng cho cả 6 và 18 decimals ở mức test). */
 const FAKE_TOKEN_BALANCE =
   "0x00000000000000000000000000000000000000000000000000000002540be400" as Hex; // 10^10
@@ -78,6 +93,8 @@ const FAKE_TOKEN_BALANCE =
 function answerCall(data: string): Hex | null {
   const selector = data.slice(0, 10).toLowerCase();
   if (selector === SELECTOR.balanceOf) return FAKE_TOKEN_BALANCE;
+  // Số dư native qua multicall (viem ≥ 2.55) — cùng giá trị như eth_getBalance.
+  if (selector === SELECTOR.getEthBalance) return FAKE_NATIVE_BALANCE_ABI;
   // allowance = 0 -> UI hiện luồng approve/permit, đúng trạng thái mặc định.
   if (selector === SELECTOR.allowance) return ZERO_WORD;
   if (selector === SELECTOR.decimals) {
@@ -203,68 +220,107 @@ function chainIdFromUrl(url: URL, fallback: number): number {
 }
 
 /**
+ * Trả lời một route JSON-RPC (dùng chung cho RPC trực tiếp lẫn proxy same-origin).
+ *
+ * viem gộp nhiều call thành mảng (batch), phải trả về mảng tương ứng.
+ */
+async function fulfillRpc(route: Route, chainId: number) {
+  if (route.request().method() === "OPTIONS") {
+    return route.fulfill({ status: 204, headers: CORS_HEADERS });
+  }
+
+  let payload: RpcRequest | RpcRequest[];
+  try {
+    payload = JSON.parse(route.request().postData() ?? "{}");
+  } catch {
+    return route.fulfill({ status: 400, body: "bad request" });
+  }
+
+  const batch = Array.isArray(payload) ? payload : [payload];
+  const responses = batch.map((req) => {
+    try {
+      const result = handleRpc(req, chainId);
+      if (result === undefined) {
+        return {
+          jsonrpc: "2.0",
+          id: req.id ?? null,
+          error: {
+            code: -32601,
+            message: `mock: chưa hỗ trợ ${req.method}`,
+          },
+        };
+      }
+      return { jsonrpc: "2.0", id: req.id ?? null, result };
+    } catch (e) {
+      return {
+        jsonrpc: "2.0",
+        id: req.id ?? null,
+        error: {
+          code: 3,
+          message: e instanceof Error ? e.message : "mock error",
+        },
+      };
+    }
+  });
+
+  await route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    headers: CORS_HEADERS,
+    body: JSON.stringify(Array.isArray(payload) ? responses : responses[0]),
+  });
+}
+
+/**
  * Cài mock lên một page. Gọi TRƯỚC `page.goto`, nếu không request đầu tiên đã
  * bay ra internet thật rồi.
  */
 export async function mockChain(page: Page, fallbackChainId = 1) {
-  // --- JSON-RPC ---
+  // --- JSON-RPC trực tiếp tới các RPC công khai ---
   await page.route(
     (url) => RPC_HOST_RE.test(url.host),
-    async (route) => {
-      if (route.request().method() === "OPTIONS") {
-        return route.fulfill({ status: 204, headers: CORS_HEADERS });
-      }
-
+    (route) => {
       const chainId = chainIdFromUrl(
         new URL(route.request().url()),
         fallbackChainId,
       );
-
-      let payload: RpcRequest | RpcRequest[];
-      try {
-        payload = JSON.parse(route.request().postData() ?? "{}");
-      } catch {
-        return route.fulfill({ status: 400, body: "bad request" });
-      }
-
-      // viem gộp nhiều call thành mảng (batch), phải trả về mảng tương ứng.
-      const batch = Array.isArray(payload) ? payload : [payload];
-      const responses = batch.map((req) => {
-        try {
-          const result = handleRpc(req, chainId);
-          if (result === undefined) {
-            return {
-              jsonrpc: "2.0",
-              id: req.id ?? null,
-              error: {
-                code: -32601,
-                message: `mock: chưa hỗ trợ ${req.method}`,
-              },
-            };
-          }
-          return { jsonrpc: "2.0", id: req.id ?? null, result };
-        } catch (e) {
-          return {
-            jsonrpc: "2.0",
-            id: req.id ?? null,
-            error: {
-              code: 3,
-              message: e instanceof Error ? e.message : "mock error",
-            },
-          };
-        }
-      });
-
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        headers: CORS_HEADERS,
-        body: JSON.stringify(Array.isArray(payload) ? responses : responses[0]),
-      });
+      return fulfillRpc(route, chainId);
     },
   );
 
-  // --- CoinGecko: giá cố định để tổng tài sản không đổi giữa các lần chạy ---
+  // --- JSON-RPC qua Worker proxy same-origin (/rpc/{chainId}) ---
+  // Build vinext cho client gọi same-origin proxy thay vì RPC trực tiếp
+  // (NEXT_PUBLIC_RPC_PROXY=1). Không mock thì request rơi xuống proxy thật
+  // trên server → gọi upstream thật → test không còn hermetic.
+  // Build Next không hề gọi URL này nên route này chỉ là no-op ở đó.
+  await page.route(
+    (url) => /^\/rpc\/\d+\/?$/.test(url.pathname),
+    (route) => {
+      const chainId = Number(
+        route.request().url().match(/\/rpc\/(\d+)/)![1],
+      );
+      return fulfillRpc(route, chainId);
+    },
+  );
+
+  // --- DefiLlama: giá cố định để tổng tài sản không đổi giữa các lần chạy ---
+  // App đã chuyển từ CoinGecko sang coins.llama.fi (usePrices/fetchCurrentPrices);
+  // không mock thì e2e gọi API thật — mất tính hermetic và dễ flaky vì rate-limit.
+  await page.route("**/coins.llama.fi/**", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      headers: CORS_HEADERS,
+      body: JSON.stringify({
+        coins: {
+          // Native của mọi chain đều map về key này (NATIVE_LLAMA_KEY).
+          "coingecko:ethereum": { price: 3000 },
+        },
+      }),
+    }),
+  );
+
+  // --- CoinGecko: chỉ còn dùng cho trang chi tiết token (fetchCoinAbout) ---
   await page.route("**/api.coingecko.com/**", (route) =>
     route.fulfill({
       status: 200,
