@@ -1,4 +1,4 @@
-import { mainnet, bsc, polygon, arbitrum, sepolia } from "wagmi/chains";
+import { mainnet, bsc, polygon, arbitrum, base, sepolia } from "wagmi/chains";
 import type { Address } from "viem";
 
 export interface TokenInfo {
@@ -68,6 +68,29 @@ export const defaultTokens: Record<number, TokenInfo[]> = {
       coingeckoId: "tether",
     },
   ],
+  [base.id]: [
+    {
+      address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      symbol: "USDC",
+      name: "USD Coin",
+      decimals: 6,
+      coingeckoId: "usd-coin",
+    },
+    {
+      address: "0x940181a94A35A4569E4529A3CDfB74bc383882B4",
+      symbol: "AERO",
+      name: "Aerodrome Finance",
+      decimals: 18,
+      coingeckoId: "aero",
+    },
+    {
+      address: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",
+      symbol: "cbBTC",
+      name: "Coinbase Wrapped BTC",
+      decimals: 8,
+      coingeckoId: null,
+    },
+  ],
   [sepolia.id]: [
     // Token testnet có pool Uniswap V3 thật trên Sepolia (đã xác minh liquidity on-chain).
     {
@@ -100,5 +123,6 @@ export const nativeCoingeckoId: Record<number, string> = {
   [bsc.id]: "binancecoin",
   [polygon.id]: "matic-network",
   [arbitrum.id]: "ethereum",
+  [base.id]: "ethereum",
   [sepolia.id]: "ethereum", // giá tham khảo; token testnet không có giá trị thật
 };

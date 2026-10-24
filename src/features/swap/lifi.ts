@@ -16,8 +16,8 @@ export { NATIVE_TOKEN_ADDRESS };
 
 const LIFI_BASE = "https://li.quest/v1";
 
-/** Chain hỗ trợ swap (testnet như Sepolia không có thanh khoản thật). */
-const supportedSwapChains = new Set([1, 56, 137, 42161]);
+/** Chain hỗ trợ swap qua aggregator (testnet như Sepolia không có thanh khoản thật). */
+const supportedSwapChains = new Set([1, 56, 137, 42161, 8453]);
 
 export function isSwapSupported(chainId: number): boolean {
   return supportedSwapChains.has(chainId);

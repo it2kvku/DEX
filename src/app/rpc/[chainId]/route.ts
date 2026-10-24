@@ -31,6 +31,7 @@ const ALCHEMY_NETWORK: Partial<Record<number, string>> = {
   1: "eth-mainnet",
   137: "polygon-mainnet",
   42161: "arb-mainnet",
+  8453: "base-mainnet",
   11155111: "eth-sepolia",
 };
 

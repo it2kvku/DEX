@@ -3,6 +3,7 @@ import {
   bsc,
   polygon,
   arbitrum,
+  base,
   sepolia,
   type Chain,
 } from "wagmi/chains";
@@ -19,6 +20,7 @@ export const supportedChains = [
   bsc,
   polygon,
   arbitrum,
+  base,
   sepolia,
 ] as const satisfies readonly [Chain, ...Chain[]];
 
@@ -34,6 +36,7 @@ function alchemyUrl(chainId: number): string | null {
     [mainnet.id]: "eth-mainnet",
     [polygon.id]: "polygon-mainnet",
     [arbitrum.id]: "arb-mainnet",
+    [base.id]: "base-mainnet",
     [sepolia.id]: "eth-sepolia",
   };
   const prefix = subdomain[chainId];
@@ -66,6 +69,10 @@ export const publicFallbackRpc: Record<number, string[]> = {
     "https://arbitrum-one-rpc.publicnode.com",
     "https://arb1.arbitrum.io/rpc",
     "https://arbitrum.drpc.org",
+  ],
+  [base.id]: [
+    "https://base-rpc.publicnode.com",
+    "https://base.drpc.org",
   ],
   [sepolia.id]: [
     "https://ethereum-sepolia-rpc.publicnode.com",

@@ -1,6 +1,6 @@
 import type { Address } from "viem";
 import { getAddress } from "viem";
-import { mainnet, bsc, polygon, arbitrum, sepolia } from "wagmi/chains";
+import { mainnet, bsc, polygon, arbitrum, base, sepolia } from "wagmi/chains";
 
 /** Slug chain trong repo Trust Wallet assets. */
 const TRUSTWALLET_CHAIN: Partial<Record<number, string>> = {
@@ -8,6 +8,7 @@ const TRUSTWALLET_CHAIN: Partial<Record<number, string>> = {
   [bsc.id]: "smartchain",
   [polygon.id]: "polygon",
   [arbitrum.id]: "arbitrum",
+  [base.id]: "base",
   [sepolia.id]: "ethereum",
 };
 

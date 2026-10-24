@@ -80,8 +80,8 @@ test("network selector đổi được sang Sepolia", async ({ page }) => {
 
   const listbox = page.getByRole("listbox");
   await expect(listbox).toBeVisible();
-  // 5 chain trong supportedChains.
-  await expect(listbox.getByRole("option")).toHaveCount(5);
+  // 6 chain trong supportedChains (Base được thêm ở P2).
+  await expect(listbox.getByRole("option")).toHaveCount(6);
 
   await listbox.getByRole("option", { name: /Sepolia/ }).click();
 

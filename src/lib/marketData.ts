@@ -1,6 +1,6 @@
 import type { Address } from "viem";
 import { getAddress } from "viem";
-import { mainnet, bsc, polygon, arbitrum, sepolia } from "wagmi/chains";
+import { mainnet, bsc, polygon, arbitrum, base, sepolia } from "wagmi/chains";
 import { nativeCoingeckoId } from "@/lib/tokens";
 
 /** Chain slug dùng trong key DefiLlama (`ethereum:0x…`). */
@@ -9,6 +9,7 @@ export const LLAMA_CHAIN: Partial<Record<number, string>> = {
   [bsc.id]: "bsc",
   [polygon.id]: "polygon",
   [arbitrum.id]: "arbitrum",
+  [base.id]: "base",
 };
 
 /** Native asset — prefix `coingecko:` vì DefiLlama index theo id CoinGecko. */
@@ -17,6 +18,7 @@ export const NATIVE_LLAMA_KEY: Record<number, string> = {
   [bsc.id]: "coingecko:binancecoin",
   [polygon.id]: "coingecko:matic-network",
   [arbitrum.id]: "coingecko:ethereum",
+  [base.id]: "coingecko:ethereum",
   [sepolia.id]: "coingecko:ethereum",
 };
 
