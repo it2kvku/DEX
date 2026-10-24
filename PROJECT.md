@@ -13,10 +13,13 @@ khỏi máy người dùng: hoặc nằm trong ví extension (MetaMask/WalletCon
 nằm trong một vault mã hóa lưu ở IndexedDB của trình duyệt.
 
 Điểm khác biệt so với một "ví demo" thông thường: tab Swap **không gọi API
-aggregator rồi hiển thị kết quả**. Trên Sepolia, dự án tự dựng một routing engine
-Uniswap V3 hoàn chỉnh — sinh route ứng viên, chấm điểm theo output ròng sau gas,
-tính price impact thật từ `sqrtPriceX96`, dựng calldata, mô phỏng trước khi ký, và
-gộp approve + swap vào **một** giao dịch bằng ERC-2612 `selfPermit`.
+aggregator rồi hiển thị kết quả**. Trên Ethereum, Arbitrum, Polygon và Sepolia,
+dự án tự dựng một routing engine Uniswap V3 hoàn chỉnh — sinh route ứng viên,
+chấm điểm theo output ròng sau gas, tính price impact thật từ `sqrtPriceX96`,
+dựng calldata, mô phỏng trước khi ký, và gộp approve + swap vào **một** giao
+dịch bằng ERC-2612 `selfPermit`. Trên các chain đó (trừ Sepolia) app còn quote
+**song song** qua LI.FI rồi tự chọn bên có net output cao hơn — và hiển thị rõ
+so sánh cho người dùng.
 
 Giao diện và toàn bộ thông báo lỗi bằng tiếng Việt.
 
@@ -199,18 +202,34 @@ interface SwapQuote {
 
 | Chain | Nguồn | Đặc điểm |
 |---|---|---|
-| 1 / 56 / 137 / 42161 | **LI.FI aggregator** (`li.quest/v1/quote`, không cần key) | có USD + gas, nhưng `priceImpactPct: null` và `plan: null` |
-| 11155111 (Sepolia) | **Routing engine tự viết** | có price impact thật, hỗ trợ `selfPermit` |
+| 1 / 137 / 42161 | **Engine V3 tự viết + LI.FI song song** — chọn bên net output cao hơn (`quoteSource.ts`) | có price impact thật + `selfPermit` khi engine thắng; có USD + gas từ cả hai |
+| 56 (BSC) | **LI.FI aggregator** (`li.quest/v1/quote`, không cần key) | BSC không có Uniswap V3 chính chủ |
+| 11155111 (Sepolia) | **Routing engine tự viết** (aggregator không hỗ trợ testnet) | có price impact thật, hỗ trợ `selfPermit`, USD = 0 |
 
-Vì sao LI.FI trả `null` ở hai field đó: aggregator không cung cấp mid price nên
-không thể tính price impact trung thực, và calldata của nó là hộp đen nên không
-chèn thêm `selfPermit` vào được. Trả `null` thay vì số bịa là quyết định có ý thức.
+Quy tắc chọn bên thắng (`pickBestQuote`): so **net USD = toAmountUsd − gasUsd**;
+thiếu giá thì rơi về toAmount thô; hòa thì chọn engine (selfPermit + price
+impact thật + không phụ thuộc bên thứ ba). Một bên chết (rate-limit, không
+route) thì dùng bên còn lại — không mất tính sẵn sàng. UI hiển thị dòng "So sánh
+nguồn: Engine X · LI.FI Y" kèm lợi thế %.
+
+Vì sao LI.FI đơn độc trả `null` ở price impact và plan: aggregator không cung
+cấp mid price nên không thể tính price impact trung thực, và calldata của nó là
+hộp đen nên không chèn thêm `selfPermit` vào được. Trả `null` thay vì số bịa là
+quyết định có ý thức.
 
 Quote `staleTime` 15s + `refetchInterval` 20s — blockchain luôn đổi, quote cũ dễ
 trượt lúc execute. `slippageBps` nằm trong `queryKey` vì nó được áp ngay vào
 `amountOutMin` trong calldata.
 
 ### 6.2 Routing engine Uniswap V3 (`routing/`)
+
+**Cấu hình theo chain** (`routing/chains.ts`): factory/QuoterV2/SwapRouter02
+dùng chung địa chỉ canonical trên Ethereum + L2, riêng Sepolia là bản deploy
+2023 với địa chỉ khác; mỗi chain có bộ token trung gian riêng (mainnet:
+WETH/USDC/USDT/DAI/WBTC ≈ 84 ứng viên; testnet chỉ giữ 2 connector có thanh
+khoản thật). BSC không có V3 chính chủ nên vẫn đi aggregator. Địa chỉ pool trên
+mainnet được khóa bằng known-answer test (USDC/WETH 0.05%, WETH/USDT 0.3%/0.05%
+— đối chiếu `Factory.getPool` trực tiếp).
 
 Bốn bước, tổng cộng **3 vòng RPC**:
 
@@ -253,7 +272,7 @@ hop, và số route đã chấm điểm.
 
 ### 6.3 Dựng calldata
 
-Đích là `SwapRouter02` (Sepolia `0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E`):
+Đích là `SwapRouter02` — địa chỉ canonical mỗi chain (mainnet/L2 `0x68b3…Fc45`, Sepolia `0x3bFA…Ae48E`; xem `routing/chains.ts`):
 
 ```
 multicall(deadline, [
@@ -535,7 +554,8 @@ Cố ý **không dùng jsdom**: chỉ test logic thuần, nơi bug thật sự �
 |---|---|
 | `routing/path.test.ts` | encode path V3, sinh ứng viên, phí LP nhân dồn |
 | `routing/pools.test.ts` | CREATE2 pool address, toán `sqrtPriceX96` → mid price |
-| `swap/uniswapSepolia.test.ts` | dựng calldata, `withSelfPermit` |
+| `swap/uniswapV3.test.ts` | dựng calldata, `withSelfPermit` |
+| `swap/quoteSource.test.ts` | chọn engine vs aggregator theo net USD |
 | `swap/permit.test.ts` | tách chữ ký (chuẩn hóa `v < 27`), typed data |
 | `swap/errors.test.ts` | ánh xạ lỗi revert/RPC/ví sang tiếng Việt |
 | `tx/storage.test.ts` | persist / TTL / giới hạn 50 bản ghi |
@@ -548,6 +568,14 @@ Cố ý **không dùng jsdom**: chỉ test logic thuần, nơi bug thật sự �
 Không dùng `next dev`: dev server bật Strict Mode double-render, có HMR overlay,
 và **không áp CSP** giống production. Một smoke test qua được dev nhưng chết ở
 production là loại lỗi tệ nhất.
+
+Từ khi có pipeline vinext, e2e chạy HAI lần với cùng bộ spec:
+`playwright.config.ts` (Next build + `next start`) và
+`playwright.vinext.config.ts` (vinext build + `vite preview` — Worker thật
+trong workerd, tức đúng runtime deploy). Bản vinext luôn chạy 1 worker vì
+workerd preview local nghẽn khi 8 browser tải cùng lúc. `worker.spec.ts` thêm
+bài cho hạ tầng: security headers có mặt và RPC proxy từ chối đúng (chain lạ,
+method ngoài allowlist, cross-origin, sai content-type).
 
 `e2e/fixtures/rpc-mock.ts` chặn **toàn bộ** tầng mạng bằng `page.route` và tự trả
 lời JSON-RPC (kể cả bung `multicall3.aggregate3` thành từng sub-call, và suy chainId
@@ -606,7 +634,12 @@ npm run dev               # http://localhost:3000
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm test` | `vitest run` |
 | `npm run test:watch` | Vitest watch mode |
-| `npx playwright test` | E2E (tự build + start server) |
+| `npm run dev:vinext` | dev server vinext (Vite + workerd, port 3001) |
+| `npm run build:vinext` | build production trên Worker (→ `.cloudflare/output`) |
+| `npm run start:vinext` | `vite preview` — chạy bản build Worker trong workerd |
+| `npm run deploy:vinext` | deploy lên Cloudflare (`vinext-cloudflare deploy`) |
+| `npx playwright test` | E2E bản Next (tự build + start server) |
+| `npx playwright test -c playwright.vinext.config.ts` | E2E bản Worker (tự build + preview workerd) |
 
 **Trải nghiệm đầy đủ tính năng DEX**: chuyển sang **Sepolia**, xin ETH testnet từ
 faucet, rồi swap giữa ETH / WETH / USDC / UNI. Chỉ trên Sepolia mới thấy route
@@ -621,9 +654,67 @@ Node-only mà WalletConnect kéo theo).
 
 ---
 
-## 15. Tóm lại — điều gì làm dự án này khác một "ví demo"
+## 15. Triển khai Cloudflare (vinext) — bản deploy chính
 
-1. **Routing engine Uniswap V3 viết từ đầu**: 36 route ứng viên, batch qua
+Song song với pipeline Next, dự án build bằng **vinext** (Next.js chạy trên
+Vite) + **`@cloudflare/vite-plugin`**, xuất ra Cloudflare Worker qua
+`.cloudflare/output`. Đây là bản thực sự deploy (domain `elytramc.tech`,
+khai báo trong `cloudflare.config.ts`).
+
+**Vì sao giữ cả hai pipeline:** Next build dùng cho dev nhanh và e2e thứ hai;
+vinext build là thứ lên production. Hai build là hai chương trình khác nhau —
+đã có lần thực tế một đầu xanh đầu kia đỏ (rule `headers()` bị parse nhưng
+pipeline render bỏ qua) nên e2e chạy trên CẢ HAI.
+
+**Config headers vẫn phát huy tác dụng trên Worker**: vinext đọc `headers()`
+từ `next.config.mjs` (log `Parsed N valid header rule` khi start). Đã xác minh
+bằng tay qua `vite preview`: CSP, `X-Frame-Options: DENY`, `nosniff`,
+`Referrer-Policy`, `Permissions-Policy` đều có mặt trên response HTML — e2e
+`worker.spec.ts` khóa hành vi này cho cả hai bản build.
+
+### 15.1 RPC proxy — giấu Alchemy key phía server
+
+`src/app/rpc/[chainId]/route.ts` là một route handler chạy TRÊN Worker. Build
+vinext bật flag `NEXT_PUBLIC_RPC_PROXY=1` (set trong `vite.config.ts` — chỉ
+file này được đọc khi build vinext, Next build không bao giờ thấy) khiến
+`buildTransports()` trong `lib/chains.ts` đặt `/rpc/{chainId}` same-origin làm
+transport ĐẦU TIÊN của mọi chain:
+
+```
+browser → /rpc/1 (Worker) → https://eth-mainnet.g.alchemy.com/v2/{ALCHEMY_API_KEY}
+```
+
+- `ALCHEMY_API_KEY` là **secret server-side** (`bindings.secret()` trong
+  `cloudflare.config.ts`), set bằng `cf workers secrets update ALCHEMY_API_KEY`.
+  Không có key thì proxy chuyển tiếp sang RPC công khai phía server — app vẫn chạy.
+- Client không còn nói chuyện trực tiếp với Alchemy; nếu proxy lỗi, viem
+  `fallback` tự chuyển sang RPC công khai trực tiếp — không mất tính sẵn sàng.
+- Proxy là endpoint công khai nên tự bảo vệ: **allowlist method** JSON-RPC
+  (chặn `debug_*`, `eth_getProof`…), **rate limit per-IP** per-isolate,
+  chặn **cross-origin** (không gửi CORS header + kiểm tra `Origin`), giới hạn
+  body 256 KB, chỉ nhận `application/json`.
+- Vì sao không cache response `eth_call`: state blockchain đổi mỗi block, cache
+  vài giây cũng trả quote/số dư sai — không đánh đổi đúng đắn để tiết kiệm
+  compute unit.
+
+### 15.2 Deploy
+
+```bash
+cf auth login                                     # lần đầu
+cf workers secrets update ALCHEMY_API_KEY         # secret cho RPC proxy
+npm run deploy:vinext                             # build + deploy Worker
+```
+
+Biến `NEXT_PUBLIC_*` (WalletConnect project id, Etherscan key…) cần có trong
+môi trường lúc BUILD vì bị inline vào bundle — set trong `.env` hoặc biến môi
+trường CI. Secret `ALCHEMY_API_KEY` là runtime, set qua cf/dashboard một lần.
+
+---
+
+## 16. Tóm lại — điều gì làm dự án này khác một "ví demo"
+
+1. **Routing engine Uniswap V3 viết từ đầu, chạy đa chain** (Ethereum/
+   Arbitrum/Polygon/Sepolia): 84 route ứng viên trên mainnet, batch qua
    Multicall3, chấm điểm theo **output ròng sau gas** chứ không phải output thô.
 2. **Price impact thật** đọc từ `sqrtPriceX96` của pool, đã trừ phí LP — không
    phải số ước lượng.
