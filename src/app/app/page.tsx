@@ -63,6 +63,17 @@ export default function AppPage() {
   const currentChain = supportedChains.find((c) => c.id === chainId);
   const unsupportedChain = isConnected && !currentChain;
 
+  // Marker hydration cho e2e: listener phím toàn trang (Ctrl+K, "/") chỉ tồn
+  // tại sau khi component này đã hydrate. Selective hydration có thể làm
+  // các client component nhỏ (vd WalletButton) lên trước AppPage — nên e2e
+  // không thể lấy chúng làm mốc rồi bấm phím ngay được.
+  useEffect(() => {
+    (window as unknown as { __appReady?: boolean }).__appReady = true;
+    return () => {
+      delete (window as unknown as { __appReady?: boolean }).__appReady;
+    };
+  }, []);
+
   // ⌘K / Ctrl+K hoặc "/" mở command palette.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

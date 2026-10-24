@@ -125,6 +125,7 @@ endpoint, tốn quota Alchemy vô ích khi endpoint đầu vẫn khỏe.
 | BNB Chain | 56 | bscscan.com | binance dataseed, publicnode |
 | Polygon | 137 | polygonscan.com | polygon-rpc, publicnode |
 | Arbitrum | 42161 | arbiscan.io | arb1.arbitrum.io, publicnode |
+| Base | 8453 | basescan.org | publicnode, drpc |
 | Sepolia | 11155111 | sepolia.etherscan.io | publicnode, drpc |
 
 ---
@@ -203,7 +204,7 @@ interface SwapQuote {
 | Chain | Nguồn | Đặc điểm |
 |---|---|---|
 | 1 / 137 / 42161 | **Engine V3 tự viết + LI.FI song song** — chọn bên net output cao hơn (`quoteSource.ts`) | có price impact thật + `selfPermit` khi engine thắng; có USD + gas từ cả hai |
-| 56 (BSC) | **LI.FI aggregator** (`li.quest/v1/quote`, không cần key) | BSC không có Uniswap V3 chính chủ |
+| 56 (BSC) / 8453 (Base) | **LI.FI aggregator** (`li.quest/v1/quote`, không cần key) | BSC không có V3 chính chủ; Base chưa vào engine (chưa xác minh bộ địa chỉ V3 trên Base) |
 | 11155111 (Sepolia) | **Routing engine tự viết** (aggregator không hỗ trợ testnet) | có price impact thật, hỗ trợ `selfPermit`, USD = 0 |
 
 Quy tắc chọn bên thắng (`pickBestQuote`): so **net USD = toAmountUsd − gasUsd**;
@@ -443,6 +444,12 @@ invalidate và dòng đó tự biến mất.
 | Gửi | `useGasEstimate` | RPC | EIP-1559, đệm gasLimit +15% |
 | | `useEnsResolve` | RPC mainnet | ENS registry **luôn** query mainnet bất kể chain đang chọn |
 | Nhận | — | — | QR code sinh client-side (`qrcode`) |
+
+**Trang Khám phá** (`/app/explore`): pool đang nóng trên chain đang chọn
+(GeckoTerminal `trending_pools`, đổi khung 5m/1h/6h/24h), click vào
+pool sang trang chi tiết token — token lạ tự đọc metadata on-chain nên
+không cần có sẵn trong danh sách. Tab Tài sản có ô tìm kiếm trên toàn bộ
+Uniswap list (mặc định chỉ hiện native + token có số dư + token tự import).
 
 `Send.tsx` là luồng 3 bước `form → confirm → result`, có phân giải ENS và bảng
 chi tiết gas (gas limit, max fee dạng gwei, tổng phí quy đổi native + USD).
