@@ -165,7 +165,10 @@ export function WalletCommandPalette({
     if (open) {
       setQuery("");
       setIndex(0);
-      setTimeout(() => inputRef.current?.focus(), 30);
+      // Focus NGAY trong effect: input đã mounted (open && ... đã commit).
+      // Đặt setTimeout trước đây tạo khe hở 30ms — bấm Esc/Enter trong khe đó
+      // thì keydown rơi xuống body, palette không đóng được.
+      inputRef.current?.focus();
     }
   }, [open]);
 

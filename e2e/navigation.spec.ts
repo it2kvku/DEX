@@ -38,8 +38,11 @@ test("app dựng được khi chưa kết nối ví", async ({ page }) => {
     page.getByRole("button", { name: /Kết nối ví để bắt đầu/ }),
   ).toBeVisible();
 
-  // Navbar: nút ví + network selector.
-  await expect(page.getByRole("button", { name: "Kết nối Ví" })).toBeVisible();
+  // Navbar: nút ví + network selector. `.first()`: RainbowKit mới render
+  // thêm một nút "Kết nối Ví" trùng tên trong modal ẩn phía cuối DOM.
+  await expect(
+    page.getByRole("button", { name: "Kết nối Ví" }).first(),
+  ).toBeVisible();
   await expect(
     page.locator('button[aria-haspopup="listbox"]'),
   ).toBeVisible();

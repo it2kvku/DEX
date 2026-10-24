@@ -16,6 +16,16 @@ test.beforeEach(async ({ page }) => {
   await expect(
     page.getByRole("button", { name: /Kết nối ví để bắt đầu/ }),
   ).toBeVisible();
+  // Chờ hydration XONG rồi mới bấm phím: nút "Kết nối ví để bắt đầu" nằm trong
+  // HTML SSR nên hiện ra trước khi React gắn listener. Nếu bấm Ctrl+K sớm hơn,
+  // keydown rơi vào hư không — palette không mở, test đỏ một cách ngẫu nhiên.
+  // Nút "Kết nối Ví" trên navbar do RainbowKit render với mounted=false ở SSR
+  // (aria-hidden + opacity 0), chỉ hiện sau render client đầu tiên — dùng nó
+  // làm mốc hydration đáng tin cậy. `.first()`: bản RainbowKit mới render
+  // thêm một nút trùng tên trong modal ẩn phía cuối DOM.
+  await expect(
+    page.getByRole("button", { name: "Kết nối Ví" }).first(),
+  ).toBeVisible();
 });
 
 const palette = (page: import("@playwright/test").Page) =>

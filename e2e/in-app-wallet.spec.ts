@@ -47,9 +47,15 @@ test("tạo ví mới: mật khẩu → 12 từ → kết nối", async ({ page 
 
   // Ví đã mở khoá + wagmi đã kết nối: panel hiện địa chỉ rút gọn.
   await expect(page.getByText("Ví in-app đã mở khóa")).toBeVisible();
-  await expect(page.locator("span.font-mono").first()).toHaveText(
-    /^0x[0-9a-fA-F]{4}\.\.\.[0-9a-fA-F]{4}$/,
-  );
+  // Lấy span ngay cạnh nhãn "Địa chỉ" trong panel — KHÔNG dùng
+  // span.font-mono đầu trang vì navbar (WalletButton) cũng có một span
+  // font-mono do RainbowKit format (4 ký tự + "…"), format khác app.
+  await expect(
+    page
+      .getByText("Địa chỉ", { exact: true })
+      .locator("..")
+      .locator("span.font-mono"),
+  ).toHaveText(/^0x[0-9a-fA-F]{4}\.\.\.[0-9a-fA-F]{4}$/);
 });
 
 test("ví đã kết nối: tab Tài sản đọc được số dư qua connector", async ({

@@ -20,6 +20,16 @@ export function InAppWalletPanel() {
     );
   }
 
+  // Luồng tạo/import đang mở: render form TRƯỚC, bất kể isUnlocked.
+  // Lý do phải đứng trước nhánh "đã mở khóa": persist() bật isUnlocked ngay
+  // khi tạo xong vault (kể cả khi người dùng chưa sao lưu mnemonic). Nếu nhánh
+  // đó chạy trước, CreateForm bị unmount theo state của panel và toàn bộ màn
+  // hình sao lưu 12 từ biến mất cùng state cục bộ — người dùng không bao giờ
+  // thấy mnemonic. Giữ form mounted tới khi bấm "Hoàn tất"/"Hủy" thì onDone()
+  // đưa mode về "menu" và panel mới chuyển sang card đã mở khóa.
+  if (mode === "create") return <CreateForm onDone={() => setMode("menu")} />;
+  if (mode === "import") return <ImportForm onDone={() => setMode("menu")} />;
+
   // Đã mở khóa: hiện thông tin + khóa/xóa.
   if (wallet.isUnlocked && wallet.address) {
     return (
@@ -45,36 +55,30 @@ export function InAppWalletPanel() {
   }
 
   // Chưa có ví: menu tạo/import.
-  if (mode === "menu") {
-    return (
-      <Card className="space-y-3">
-        <p className="text-sm text-neutral-400">
-          Ví in-app do trình duyệt quản lý (mã hóa bằng mật khẩu). Dùng khi bạn
-          không có ví extension.
-        </p>
-        <div className="flex gap-2">
-          <Button onClick={() => setMode("create")} className="flex-1">
-            Tạo ví mới
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={() => setMode("import")}
-            className="flex-1"
-          >
-            Import ví
-          </Button>
-        </div>
-        <Alert variant="warning">
-          Ví web tự lưu key có rủi ro bảo mật cao hơn ví extension. Chỉ dùng cho
-          số tiền nhỏ hoặc để test.
-        </Alert>
-      </Card>
-    );
-  }
-
-  if (mode === "create") return <CreateForm onDone={() => setMode("menu")} />;
-  if (mode === "import") return <ImportForm onDone={() => setMode("menu")} />;
-  return null;
+  return (
+    <Card className="space-y-3">
+      <p className="text-sm text-neutral-400">
+        Ví in-app do trình duyệt quản lý (mã hóa bằng mật khẩu). Dùng khi bạn
+        không có ví extension.
+      </p>
+      <div className="flex gap-2">
+        <Button onClick={() => setMode("create")} className="flex-1">
+          Tạo ví mới
+        </Button>
+        <Button
+          variant="secondary"
+          onClick={() => setMode("import")}
+          className="flex-1"
+        >
+          Import ví
+        </Button>
+      </div>
+      <Alert variant="warning">
+        Ví web tự lưu key có rủi ro bảo mật cao hơn ví extension. Chỉ dùng cho
+        số tiền nhỏ hoặc để test.
+      </Alert>
+    </Card>
+  );
 }
 
 function RemoveButton() {
