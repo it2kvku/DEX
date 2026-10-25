@@ -167,16 +167,26 @@ Chuỗi bốn file trong `src/lib/wallet/in-app/`:
 method còn lại** sang một viem public client. Đó là lý do `useBalance`,
 `useReadContracts`, `useWriteContract` chạy y hệt với cả hai loại ví.
 
-`InAppWalletContext.tsx` giữ state `{hasVault, address, isUnlocked, vault,
-sessionPassword, loading}` và các action `create / importFromMnemonic / unlock /
-lock / remove`. Hai chi tiết đáng lưu ý:
+`InAppWalletContext.tsx` giữ state (kèm `accounts` đa tài khoản HD, `activeIndex`,
+`autolockMinutes`) và các action `create / importFromMnemonic / unlock / lock /
+remove / addAccount / switchAccount / setAutolockMinutes`. Chi tiết đáng lưu ý:
 - `disconnectIfInApp()` chỉ ngắt kết nối khi connector hiện tại **là** ví in-app —
   nếu không sẽ vô tình ngắt MetaMask của người dùng.
-- Trước `connectAsync` luôn disconnect trước, tránh `ConnectorAlreadyConnectedError`.
+- `activateConnector` disconnect trước rồi MỚI nạp account: disconnect của
+  connector in-app gọi `clearInAppAccount()`, nạp trước sẽ làm connectAsync
+  gặp "Ví in-app chưa mở khóa" khi chuyển tài khoản.
 
 UI cảnh báo thẳng: *"Ví web tự lưu key có rủi ro bảo mật cao hơn ví extension.
 Chỉ dùng cho số tiền nhỏ hoặc để test."* Luồng tạo ví bắt buộc tick xác nhận đã
 sao lưu 12 từ mới cho bấm "Hoàn tất"; xóa ví cần xác nhận hai bước.
+
+**Đa tài khoản HD**: một mnemonic, nhiều `m/44'/60'/0'/0/{index}` — panel liệt
+kê tài khoản, thêm mới không cần nhập lại mật khẩu (dùng session), chuyển tài
+khoản reconnect connector. Vault cũ tự migrate (bổ sung `accounts` khi đọc).
+
+**Tự khóa khi rảnh** (mặc định 10 phút, cấu hình 5/10/30/không): mỗi tương tác
+reset bộ đếm; hết giờ thì khóa như nút "Khóa ví" — mật khẩu phiên không nằm
+trong RAM mãi mãi.
 
 ---
 
