@@ -31,6 +31,7 @@ const UNI = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984" as Address;
 
 const SEPOLIA_FACTORY = getV3ChainConfig(11155111)!.factory;
 const MAINNET_FACTORY = getV3ChainConfig(mainnet.id)!.factory;
+const BASE_FACTORY = getV3ChainConfig(8453)!.factory;
 
 const Q96 = 2n ** 96n;
 
@@ -97,6 +98,25 @@ describe("computePoolAddress", () => {
         MAINNET_FACTORY,
       ),
     ).toBe("0x11b815efB8f581194ae79006d24E0d814B7697F6");
+  });
+
+  // Base: factory deploy riêng nhưng init code hash trùng — 4/4 pool dưới đây
+  // là kết quả `Factory.getPool` thật trên Base (đối chiếu qua RPC production).
+  it("khớp pool Base USDC/WETH cả 4 fee tier (factory deploy riêng)", () => {
+    const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address;
+    const WETH_BASE = "0x4200000000000000000000000000000000000006" as Address;
+    expect(computePoolAddress(USDC_BASE, WETH_BASE, 100, BASE_FACTORY)).toBe(
+      "0xb4CB800910B228ED3d0834cF79D697127BBB00e5",
+    );
+    expect(computePoolAddress(USDC_BASE, WETH_BASE, 500, BASE_FACTORY)).toBe(
+      "0xd0b53D9277642d899DF5C87A3966A349A798F224",
+    );
+    expect(computePoolAddress(USDC_BASE, WETH_BASE, 3000, BASE_FACTORY)).toBe(
+      "0x6c561B446416E1A00E8E93E221854d6eA4171372",
+    );
+    expect(computePoolAddress(USDC_BASE, WETH_BASE, 10000, BASE_FACTORY)).toBe(
+      "0x0b1C2DCbBfA744ebD3fC17fF1A96A1E1Eb4B2d69",
+    );
   });
 
   it("thứ tự token không ảnh hưởng kết quả", () => {
