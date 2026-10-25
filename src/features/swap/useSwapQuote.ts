@@ -17,12 +17,13 @@ import type { RouteToken } from "./routing/path";
 
 /**
  * Quote swap theo chain:
- * - Engine chain (Ethereum/Arbitrum/Polygon/Sepolia): routing engine Uniswap V3
- *   tự viết; trên mainnet và L2 còn gọi THÊM LI.FI để so sánh và chọn bên cho
- *   net output cao hơn (xem quoteSource.ts). Sepolia không có aggregator nên
- *   engine là nguồn duy nhất.
+ * - Cross-chain (toChainId !== chainId): LI.FI bridge — engine nội bộ chỉ chạy
+ *   cùng chain, và comparison hai nguồn không có nghĩa khi hai bên khác chain.
+ * - Engine chain (Ethereum/Arbitrum/Polygon/Base/Sepolia), cùng chain: routing
+ *   engine Uniswap V3 tự viết; trên mainnet/L2 còn gọi THÊM LI.FI để so sánh
+ *   và chọn bên cho net output cao hơn (xem quoteSource.ts). Sepolia không có
+ *   aggregator nên engine là nguồn duy nhất.
  * - Chain còn lại (BSC): LI.FI aggregator.
- * Mọi nguồn trả về cùng shape SwapQuote nên UI không cần phân nhánh.
  *
  * staleTime 15s + tự refetch mỗi 20s vì quote là "estimated" —
  * blockchain luôn thay đổi, quote cũ dễ trượt khi execute.
@@ -30,6 +31,7 @@ import type { RouteToken } from "./routing/path";
  */
 export function useSwapQuote({
   chainId,
+  toChainId,
   tokenIn,
   tokenOut,
   amountInWei,
@@ -38,6 +40,8 @@ export function useSwapQuote({
   enabled = true,
 }: {
   chainId: number;
+  /** Chain đích — khác chainId = cross-chain bridge. Mặc định cùng chain. */
+  toChainId?: number;
   /** null khi người dùng chưa chọn token. */
   tokenIn: RouteToken | null;
   tokenOut: RouteToken | null;
@@ -47,28 +51,33 @@ export function useSwapQuote({
   enabled?: boolean;
 }) {
   const publicClient = usePublicClient({ chainId });
+  const destChainId = toChainId ?? chainId;
+  const crossChain = destChainId !== chainId;
 
   const nativeIn = tokenIn?.address === NATIVE_TOKEN_ADDRESS;
   const nativeOut = tokenOut?.address === NATIVE_TOKEN_ADDRESS;
 
   // Native và wrapped là cùng một tài sản — không có pool, chặn trước khi gọi
-  // RPC. Chỉ áp cho engine chain vì LI.FI tự xử wrap/unwrap theo cách riêng.
+  // RPC. Chỉ áp cho cùng chain (engine) và cùng token trên LI.FI; bridge sang
+  // chain khác nhận wrapped là hợp lệ (LI.FI tự xử).
   const wrapped = wrappedNativeOf(chainId);
   const isWrapped = (t: RouteToken | null) =>
     !!wrapped && t?.address.toLowerCase() === wrapped.address.toLowerCase();
   const sameAsset =
+    !crossChain &&
     !!tokenIn &&
     !!tokenOut &&
     (tokenIn.address.toLowerCase() === tokenOut.address.toLowerCase() ||
       (nativeIn && isWrapped(tokenOut)) ||
       (nativeOut && isWrapped(tokenIn)));
 
-  const engine = isEngineChain(chainId);
+  const engine = isEngineChain(chainId) && !crossChain;
 
   return useQuery<SwapQuote>({
     queryKey: [
       "swap-quote",
       chainId,
+      destChainId,
       tokenIn?.address,
       tokenOut?.address,
       amountInWei.toString(),
@@ -78,6 +87,7 @@ export function useSwapQuote({
     enabled:
       enabled &&
       isSwapChainSupported(chainId) &&
+      (crossChain ? isSwapChainSupported(destChainId) : true) &&
       (!engine || !!publicClient) &&
       !!tokenIn &&
       !!tokenOut &&
@@ -88,6 +98,19 @@ export function useSwapQuote({
     refetchInterval: 20_000,
     retry: 1,
     queryFn: async () => {
+      // Cross-chain: chỉ LI.FI — không engine (chỉ cùng chain), không so sánh.
+      if (crossChain) {
+        return fetchLifiQuote(
+          chainId,
+          tokenIn!.address,
+          tokenOut!.address,
+          amountInWei,
+          fromAddress!,
+          slippageBps,
+          destChainId,
+        );
+      }
+
       if (engine && tokenIn && tokenOut && fromAddress) {
         // Mainnet/L2: hai nguồn chạy song song rồi chọn bên tốt hơn; một bên
         // chết (rate-limit, không route) thì dùng bên còn lại — allSettled.

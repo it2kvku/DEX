@@ -69,6 +69,16 @@ export interface SwapQuote {
   /** Chi tiết calldata để chèn permit; null nếu nguồn không cho phép. */
   plan: SwapPlan | null;
   /**
+   * Thời gian thực thi ước tính (giây) — chỉ bridge cross-chain trả; cùng
+   * chain thường ~vài giây nên null.
+   */
+  bridgeDurationSec?: number | null;
+  /**
+   * Slug tool bridge của LI.FI (vd "across") — khác `tool` (tên hiển thị).
+   * Cần cho /status sau khi tx nguồn vào block.
+   */
+  bridgeTool?: string | null;
+  /**
    * Có mặt khi cả engine nội bộ VÀ aggregator cùng trả quote cho chain đó:
    * dùng để hiển thị "vì sao chọn nguồn này" và khóa hành vi so sánh.
    */

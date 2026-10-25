@@ -12,17 +12,24 @@ import type { Address, Hex } from "viem";
  */
 
 export type TxStatus =
-  /** Đã gửi, chưa có receipt. */
+  /** Đã gửi, chưa có receipt phía chain nguồn. */
   | "pending"
   /** Receipt status = success. */
   | "success"
   /** Receipt status = reverted (đã mất gas). */
   | "reverted"
   /** Hết thời gian theo dõi mà chưa vào block — có thể bị drop khỏi mempool. */
-  | "dropped";
+  | "dropped"
+  /**
+   * CHỈ bridge cross-chain: tx NGUỒN đã vào block thành công, token đang
+   * trên đường sang chain đích. Tiếp tục poll LI.FI /status tới khi DONE
+   * (→ success) hoặc FAILED (→ reverted) — hoặc hết BRIDGE_TTL (→ success
+   * kèm ghi chú chưa xác nhận phía đích, vì tiền nguồn đã đi thật).
+   */
+  | "receiving";
 
 /** Loại giao dịch — quyết định icon và câu thông báo. */
-export type TxKind = "swap" | "approve" | "revoke" | "send";
+export type TxKind = "swap" | "approve" | "revoke" | "send" | "bridge";
 
 /** Lý do một tx bị thay thế (người dùng speed-up/cancel trong ví). */
 export type TxReplacement = "repriced" | "cancelled" | "replaced";
@@ -49,6 +56,16 @@ export interface TrackedTx {
   replacement?: TxReplacement;
   /** Lý do thất bại (revert reason hoặc lỗi theo dõi), chưa dịch. */
   error?: string;
+  /** Chỉ kind "bridge": thông tin theo dõi cross-chain qua LI.FI /status. */
+  bridge?: {
+    /** Tên tool từ quote (vd "across") — tham số bắt buộc của /status. */
+    tool: string;
+    toChainId: number;
+    /** Tx hash phía chain đích khi bridge xong. */
+    receivingTxHash?: Hex;
+    /** Substatus LI.FI (REFUNDED, COMPLETED…) khi thất bại. */
+    substatus?: string;
+  };
 }
 
 /** Thông báo hiện lên khi một tx chuyển sang trạng thái cuối. */
@@ -62,5 +79,6 @@ export interface TxNotice {
 
 /** Bản ghi đã ở trạng thái cuối (không cần theo dõi tiếp). */
 export function isFinal(tx: TrackedTx): boolean {
-  return tx.status !== "pending";
+  // "receiving" chưa final — bridge vẫn đang chuyển tiền sang đích.
+  return tx.status === "success" || tx.status === "reverted" || tx.status === "dropped";
 }

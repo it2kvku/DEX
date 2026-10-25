@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   useAccount,
   useChainId,
@@ -17,9 +17,11 @@ import {
   ShieldAlert,
 } from "lucide-react";
 import { erc20Abi } from "@/lib/abi/erc20";
-import { explorerTxUrl } from "@/lib/chains";
+import { explorerTxUrl, supportedChains } from "@/lib/chains";
 import { formatUsd } from "@/lib/format";
-import { useAssets } from "@/features/asset/useBalances";
+import { useAssets, type AssetRow } from "@/features/asset/useBalances";
+import { useTokenList } from "@/features/asset/useTokenList";
+import { ChainIcon } from "@/components/CryptoIcon";
 import { useTxCenter, useTrackedTx } from "@/features/tx/TxCenter";
 import { Alert, Button, Card, Label, Spinner } from "@/components/ui";
 import { Checkmark } from "@/components/anim/Checkmark";
@@ -72,6 +74,9 @@ export function Swap({
   const [customSlippage, setCustomSlippage] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [succeeded, setSucceeded] = useState(false);
+  /** Chain đích của token NHẬN — khác chain nguồn = cross-chain bridge. */
+  const [toChainId, setToChainId] = useState<number>(chainId);
+  const crossChain = toChainId !== chainId;
 
   // Reset lựa chọn khi đổi chain (token list khác nhau).
   useEffect(() => {
@@ -79,13 +84,45 @@ export function Swap({
     setTokenOut(defaultTokenOut);
     setAmountIn("");
     setSucceeded(false);
+    setToChainId(chainId);
   }, [chainId, defaultTokenIn, defaultTokenOut]);
 
+  // Đổi chain đích = đổi luôn token nhận (token của chain cũ vô nghĩa).
+  useEffect(() => {
+    setTokenOut(null);
+  }, [toChainId]);
+
+  // ---- Token đích: danh sách theo chain đích (không cần số dư, chỉ metadata) ----
+  const destTokenList = useTokenList(toChainId);
+  const destRows: AssetRow[] = useMemo(() => {
+    const chain = supportedChains.find((c) => c.id === toChainId);
+    const native: AssetRow = {
+      kind: "native",
+      symbol: chain?.nativeCurrency.symbol ?? "ETH",
+      name: chain?.nativeCurrency.name ?? chain?.nativeCurrency.symbol ?? "Ether",
+      decimals: chain?.nativeCurrency.decimals ?? 18,
+      balance: 0n,
+      coingeckoId: null,
+    };
+    const erc20: AssetRow[] = destTokenList.tokens.map((t) => ({
+      kind: "erc20",
+      address: t.address,
+      symbol: t.symbol,
+      name: t.name,
+      decimals: t.decimals,
+      balance: 0n,
+      coingeckoId: t.coingeckoId,
+      logoUri: t.logoUri,
+    }));
+    return [native, ...erc20];
+  }, [destTokenList.tokens, toChainId]);
+
   // ---- Token info ----
+  const outRows = crossChain ? destRows : rows;
   const rowIn = rows.find((r) =>
     tokenIn === "native" ? r.kind === "native" : r.address === tokenIn,
   );
-  const rowOut = rows.find((r) =>
+  const rowOut = outRows.find((r) =>
     tokenOut === "native" ? r.kind === "native" : r.address === tokenOut,
   );
   const decimalsIn = rowIn?.decimals ?? 18;
@@ -128,8 +165,10 @@ export function Swap({
     !!rowIn && amountInWei > 0n && amountInWei > rowIn.balance;
 
   // ---- Quote (1 call trả về đủ: estimate + approvalAddress + calldata) ----
+  // Cross-chain (toChainId khác): LI.FI bridge; cùng chain: engine + LI.FI.
   const quote = useSwapQuote({
     chainId,
+    toChainId,
     tokenIn: tokenInInfo,
     tokenOut: tokenOutInfo,
     amountInWei,
@@ -235,6 +274,8 @@ export function Swap({
   // được route/thanh khoản mà không cần user trả gas cho approve trước.
   // Khi đã ký permit thì KHÔNG override: eth_call chạy luôn `token.permit` với
   // chữ ký thật, nên simulation cũng là bước kiểm tra chữ ký.
+  // TẮT cho bridge cross-chain: calldata của aggregator thực thi tiếp phía
+  // chain đích nên eth_call trên chain nguồn hay revert giả — chặn ký nhầm.
   const simulation = useSwapSimulation({
     chainId,
     quote: txQuote,
@@ -242,7 +283,7 @@ export function Swap({
     fromAddress: address,
     amountInWei,
     overrideAllowance: !allowanceSufficient && !permitReady,
-    enabled: !succeeded && !insufficientBalance,
+    enabled: !succeeded && !insufficientBalance && !crossChain,
   });
   const sim = simulation.data;
   /** Chặn ký khi simulation chứng minh lệnh sẽ revert. */
@@ -306,16 +347,22 @@ export function Swap({
       {
         onSuccess: (hash) => {
           if (!address) return;
+          const destChainName =
+            supportedChains.find((c) => c.id === toChainId)?.name ?? "";
           track({
             hash,
             chainId,
             from: address,
-            kind: "swap",
+            kind: crossChain ? "bridge" : "swap",
             title: `${debouncedAmount} ${rowIn?.symbol ?? ""} → ${Number(
               formatUnits(amountOut, decimalsOut),
             ).toLocaleString("en-US", { maximumFractionDigits: 6 })} ${
               rowOut?.symbol ?? ""
-            }`,
+            }${crossChain ? ` (${destChainName})` : ""}`,
+            // Cross-chain cần poll LI.FI /status sau khi tx nguồn vào block.
+            ...(crossChain && q?.bridgeTool
+              ? { bridge: { tool: q.bridgeTool, toChainId } }
+              : {}),
           });
         },
       },
@@ -533,7 +580,9 @@ export function Swap({
       {/* Box Mua */}
       <div className="rounded-2xl border border-white/[0.07] bg-white/[0.04] p-4">
         <div className="mb-1.5 flex items-center justify-between">
-          <span className="text-xs text-neutral-500">Mua (ước tính)</span>
+          <span className="text-xs text-neutral-500">
+            Mua (ước tính){crossChain ? " — bridge" : ""}
+          </span>
           {quote.isFetching && <Spinner className="!h-3 !w-3" />}
         </div>
         <div className="flex items-center gap-2">
@@ -545,10 +594,11 @@ export function Swap({
                 )
               : "0"}
           </div>
+          <ChainPicker value={toChainId} onChange={setToChainId} exclude={chainId} />
           <TokenSelect
             value={tokenOut}
             onChange={setTokenOut}
-            rows={rows}
+            rows={outRows}
             exclude={tokenIn}
           />
         </div>
@@ -608,6 +658,16 @@ export function Swap({
             label="Phí gas ước tính"
             value={q.gasUsd ? formatUsd(q.gasUsd) : "—"}
           />
+          {crossChain && q.bridgeDurationSec != null && q.bridgeDurationSec > 60 && (
+            <Row
+              label="Thời gian bridge ước tính"
+              value={
+                q.bridgeDurationSec >= 3600
+                  ? `~${Math.round(q.bridgeDurationSec / 360) / 10} giờ`
+                  : `~${Math.round(q.bridgeDurationSec / 60)} phút`
+              }
+            />
+          )}
           <Row label="Slippage" value={`${(slippageBps / 100).toFixed(2)}%`} />
           {q.comparison && <ComparisonRow comparison={q.comparison} />}
           <Row
@@ -678,6 +738,7 @@ export function Swap({
         signing={swapTx.isPending}
         pending={swap.isPending}
         symbolIn={rowIn?.symbol ?? ""}
+        crossChain={crossChain}
         onApprove={doApprove}
         onPermit={doPermit}
         onSwap={doSwap}
@@ -792,19 +853,20 @@ function SwapButton(props: {
   signing: boolean;
   pending: boolean;
   symbolIn: string;
+  crossChain: boolean;
   onApprove: () => void;
   onPermit: () => void;
   onSwap: () => void;
 }) {
   const p = props;
-  let label = "Swap";
+  let label = p.crossChain ? "Bridge" : "Swap";
   let action: (() => void) | undefined = p.onSwap;
   let disabled = false;
   let busy = false;
   let icon: "permit" | null = null;
 
   if (!p.isConnected) {
-    label = "Kết nối ví để swap";
+    label = `Kết nối ví để ${p.crossChain ? "bridge" : "swap"}`;
     disabled = true;
   } else if (!p.hasTokenOut) {
     label = "Chọn token nhận";
@@ -923,4 +985,83 @@ function rate(
   const b = Number(formatUnits(amountOut, decOut));
   if (!a || !b) return "—";
   return (b / a).toLocaleString("en-US", { maximumSignificantDigits: 6 });
+}
+
+/**
+ * Chọn chain đích cho bridge: pill icon chain, mở dropdown supportedChains.
+ * `exclude` đánh dấu chain nguồn (chọn lại chain nguồn = về swap cùng chain).
+ */
+function ChainPicker({
+  value,
+  onChange,
+  exclude,
+}: {
+  value: number;
+  onChange: (chainId: number) => void;
+  exclude: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        title="Chain nhận token"
+        className="flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.06] p-1.5 text-white outline-none transition-colors hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-white/20"
+      >
+        <ChainIcon chainId={value} size={18} />
+      </button>
+      {open && (
+        <div
+          className="glass absolute right-0 z-50 mt-2 w-52 overflow-hidden rounded-2xl py-1.5 shadow-2xl"
+          role="listbox"
+        >
+          <p className="px-3.5 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-neutral-600">
+            Chain nhận
+          </p>
+          {supportedChains.map((c) => {
+            const active = c.id === value;
+            const isSource = c.id === exclude;
+            return (
+              <button
+                key={c.id}
+                role="option"
+                aria-selected={active}
+                onClick={() => {
+                  onChange(c.id);
+                  setOpen(false);
+                }}
+                className={`flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors ${
+                  active
+                    ? "bg-white/[0.08] text-white"
+                    : isSource
+                      ? "text-neutral-600"
+                      : "text-neutral-300 hover:bg-white/[0.05]"
+                }`}
+              >
+                <ChainIcon chainId={c.id} size={18} />
+                <span className="flex-1 truncate">{c.name}</span>
+                {isSource && (
+                  <span className="text-[10px] text-neutral-600">nguồn</span>
+                )}
+                {active && <span className="text-accent1">✓</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }

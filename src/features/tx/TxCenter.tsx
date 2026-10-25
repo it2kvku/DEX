@@ -15,6 +15,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { waitForTransactionReceipt } from "viem/actions";
 import type { Address, Hex } from "viem";
 import { explorerTxUrl, type SupportedChainId } from "@/lib/chains";
+import { fetchLifiStatus } from "@/features/swap/lifi";
 import { loadTxs, saveTxs, PENDING_TTL_MS } from "./storage";
 import { isFinal, type TrackedTx, type TxKind, type TxNotice } from "./types";
 
@@ -51,6 +52,7 @@ const KIND_LABEL: Record<TxKind, string> = {
   approve: "Approve",
   revoke: "Thu hồi quyền",
   send: "Chuyển token",
+  bridge: "Bridge",
 };
 
 /** Chu kỳ quét lại hàng đợi — để thử lại watcher đã chết vì lỗi RPC. */
@@ -59,6 +61,17 @@ const SWEEP_INTERVAL_MS = 20_000;
 /** Thời gian toast tự tắt. */
 const NOTICE_TTL_MS = 6_000;
 
+/**
+ * Bridge cross-chain có thể mất vài chục phút — không dùng TTL pending 30 phút
+ * chung. Sau BRIDGE_TTL: tx nguồn ĐÃ thành công (thật), chỉ là chưa xác nhận
+ * được phía đích → đánh success kèm ghi chú, không đổ lỗi cho bridge.
+ */
+const BRIDGE_TTL_MS = 2 * 60 * 60_000;
+
+/** Chu kỳ poll LI.FI /status cho tx đang "receiving". */
+const BRIDGE_POLL_FIRST_MS = 3_000;
+const BRIDGE_POLL_INTERVAL_MS = 15_000;
+
 export interface TrackArgs {
   hash: Hex;
   chainId: number;
@@ -66,6 +79,8 @@ export interface TrackArgs {
   kind: TxKind;
   /** Mô tả ngắn, vd "0.1 ETH → 320 USDC". */
   title: string;
+  /** Chỉ kind "bridge": tool name + chain đích để poll LI.FI /status. */
+  bridge?: { tool: string; toChainId: number };
 }
 
 interface TxCenterValue {
@@ -130,6 +145,98 @@ export function TxCenterProvider({ children }: { children: ReactNode }) {
   }, [queryClient]);
 
   /**
+   * Poll LI.FI /status cho tx bridge đang "receiving" tới khi DONE/FAILED.
+   * Lần đầu sau 3s (bridge nhanh có thể xong trong vài giây), sau đó 15s/lần.
+   * Lỗi mạng xen giữa (status unknown) KHÔNG dừng poll — chỉ TTL dừng.
+   */
+  const watchBridgeDestination = useCallback(
+    async (id: string, sourceHash: Hex, tx: TrackedTx) => {
+      const bridge = tx.bridge!;
+      const deadline = tx.createdAt + BRIDGE_TTL_MS;
+      let nextDelay = BRIDGE_POLL_FIRST_MS;
+
+      try {
+        while (Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, nextDelay));
+          nextDelay = BRIDGE_POLL_INTERVAL_MS;
+
+          let status;
+          try {
+            status = await fetchLifiStatus({
+              bridge: bridge.tool,
+              fromChain: tx.chainId,
+              toChain: bridge.toChainId,
+              txHash: sourceHash,
+            });
+          } catch {
+            continue; // Lỗi mạng — thử lại ở vòng sau.
+          }
+
+          if (status.status === "done") {
+            patch(id, {
+              status: "success",
+              finalizedAt: Date.now(),
+              bridge: {
+                ...bridge,
+                receivingTxHash: status.receivingTxHash ?? undefined,
+              },
+            });
+            pushNotice({
+              id: `${id}:bridge-done`,
+              tone: "success",
+              message: `Bridge hoàn tất — ${tx.title}`,
+              url: status.receivingTxHash
+                ? explorerTxUrl(bridge.toChainId, status.receivingTxHash)
+                : null,
+            });
+            refetchOnChainData();
+            return;
+          }
+          if (status.status === "failed") {
+            // Tx nguồn thành công nhưng bridge thất bại phía LI.FI (thường là
+            // REFUNDED về ví nguồn) — không phải "reverted" của chính tx.
+            patch(id, {
+              status: "reverted",
+              finalizedAt: Date.now(),
+              error: `bridge thất bại${status.substatus ? ` (${status.substatus})` : ""}`,
+              bridge: { ...bridge, substatus: status.substatus ?? undefined },
+            });
+            pushNotice({
+              id: `${id}:bridge-failed`,
+              tone: "error",
+              message: `Bridge thất bại${status.substatus ? ` — ${status.substatus}` : ""}. Kiểm tra ví nguồn (thường được refund).`,
+              url: explorerTxUrl(tx.chainId, sourceHash),
+            });
+            refetchOnChainData();
+            return;
+          }
+          // pending / unknown — poll tiếp, và lưu tx đích nếu LI.FI đã lộ.
+          if (status.receivingTxHash) {
+            patch(id, {
+              bridge: {
+                ...bridge,
+                receivingTxHash: status.receivingTxHash,
+              },
+            });
+          }
+        }
+        // Hết TTL mà chưa biết kết quả: tx nguồn ĐÃ thành công — không gọi là
+        // thất bại, ghi chú để người dùng tự kiểm tra.
+        patch(id, {
+          status: "success",
+          finalizedAt: Date.now(),
+          error: "chưa xác nhận được phía đích sau 2 giờ — kiểm tra explorer",
+        });
+        refetchOnChainData();
+      } finally {
+        watching.current.delete(id);
+      }
+    },
+    [patch, pushNotice, refetchOnChainData],
+  );
+
+
+  /**
    * Theo dõi một tx tới trạng thái cuối. `waitForTransactionReceipt` của viem tự
    * lo cả trường hợp tx bị thay thế (speed-up/cancel trong ví): nó dò tx cùng
    * nonce trong block mới và gọi `onReplaced` với hash mới — nhờ vậy tx được
@@ -142,9 +249,17 @@ export function TxCenterProvider({ children }: { children: ReactNode }) {
 
       // Tx đã pending quá lâu: có thể đã bị drop khỏi mempool nên chờ tiếp là
       // treo vô hạn. Đánh dấu dropped và để người dùng tự kiểm tra explorer.
+      // Bridge dùng TTL riêng (dài hơn nhiều) phía dưới.
       const age = Date.now() - tx.createdAt;
-      if (age > PENDING_TTL_MS) {
-        patch(tx.id, { status: "dropped", finalizedAt: Date.now() });
+      const isBridgeTtl = tx.kind === "bridge";
+      if (age > (isBridgeTtl ? BRIDGE_TTL_MS : PENDING_TTL_MS)) {
+        patch(tx.id, {
+          status: isBridgeTtl ? "success" : "dropped",
+          finalizedAt: Date.now(),
+          error: isBridgeTtl
+            ? "đã vào block phía nguồn nhưng chưa xác nhận được phía đích — kiểm tra explorer"
+            : undefined,
+        });
         watching.current.delete(tx.id);
         return;
       }
@@ -159,7 +274,10 @@ export function TxCenterProvider({ children }: { children: ReactNode }) {
           hash,
           // Thời gian còn lại của TTL, không phải TTL đầy: tx nạp lại từ
           // localStorage đã "già" sẵn một khoảng.
-          timeout: Math.max(PENDING_TTL_MS - age, 30_000),
+          timeout: Math.max(
+            (isBridgeTtl ? BRIDGE_TTL_MS : PENDING_TTL_MS) - age,
+            30_000,
+          ),
           onReplaced: (replacement) => {
             hash = replacement.transaction.hash;
             patch(tx.id, {
@@ -171,6 +289,22 @@ export function TxCenterProvider({ children }: { children: ReactNode }) {
         });
 
         const reverted = receipt.status === "reverted";
+
+        // Bridge cross-chain: tx nguồn xong CHƯA là hết chuyện — token đang
+        // đường sang chain đích. Chuyển "receiving" và poll LI.FI /status.
+        if (!reverted && tx.kind === "bridge" && tx.bridge) {
+          patch(tx.id, { status: "receiving", hash: receipt.transactionHash });
+          refetchOnChainData();
+          pushNotice({
+            id: `${tx.id}:receiving`,
+            tone: "success",
+            message: `${KIND_LABEL[tx.kind]} đã xác nhận phía nguồn — đang chờ token sang chain đích.`,
+            url: explorerTxUrl(tx.chainId, receipt.transactionHash),
+          });
+          await watchBridgeDestination(tx.id, receipt.transactionHash, tx);
+          return;
+        }
+
         patch(tx.id, {
           hash: receipt.transactionHash,
           status: reverted ? "reverted" : "success",
@@ -202,7 +336,7 @@ export function TxCenterProvider({ children }: { children: ReactNode }) {
           id: `${tx.id}:dropped`,
           tone: "warning",
           message: `${KIND_LABEL[tx.kind]} chưa xác nhận được sau ${Math.round(
-            PENDING_TTL_MS / 60_000,
+            (isBridgeTtl ? BRIDGE_TTL_MS : PENDING_TTL_MS) / 60_000,
           )} phút — kiểm tra lại trên explorer.`,
           url: explorerTxUrl(tx.chainId, hash),
         });
@@ -210,7 +344,7 @@ export function TxCenterProvider({ children }: { children: ReactNode }) {
         watching.current.delete(tx.id);
       }
     },
-    [config, patch, pushNotice, refetchOnChainData],
+    [config, patch, pushNotice, refetchOnChainData, watchBridgeDestination],
   );
 
   /**
@@ -251,6 +385,7 @@ export function TxCenterProvider({ children }: { children: ReactNode }) {
         title: args.title,
         status: "pending",
         createdAt: Date.now(),
+        ...(args.bridge ? { bridge: args.bridge } : {}),
       };
       return [record, ...prev];
     });

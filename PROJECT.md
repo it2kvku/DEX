@@ -223,6 +223,15 @@ impact thật + không phụ thuộc bên thứ ba). Một bên chết (rate-lim
 route) thì dùng bên còn lại — không mất tính sẵn sàng. UI hiển thị dòng "So sánh
 nguồn: Engine X · LI.FI Y" kèm lợi thế %.
 
+**Bridge cross-chain** (P4): phía "Mua" có bộ chọn chain đích — chọn chain khác
+là lệnh bridge qua LI.FI (engine nội bộ chỉ chạy cùng chain; UI đổi nhãn nút
+thành Bridge và tắt preflight simulation vì calldata thực thi tiếp phía đích).
+Sau khi tx nguồn vào block, Transaction Center chuyển trạng thái `receiving`
+và poll LI.FI `/status` tới DONE (tx đích hiện link explorer riêng) hoặc
+FAILED (thường REFUNDED về ví nguồn — thông báo nói rõ, không gọi là revert
+của tx). TTL bridge riêng 2 giờ; hết giờ mà chưa biết kết quả thì đánh success
+kèm ghi chú vì tiền nguồn đã đi thật.
+
 Vì sao LI.FI đơn độc trả `null` ở price impact và plan: aggregator không cung
 cấp mid price nên không thể tính price impact trung thực, và calldata của nó là
 hộp đen nên không chèn thêm `selfPermit` vào được. Trả `null` thay vì số bịa là

@@ -177,6 +177,27 @@ function handleRpc(req: RpcRequest, chainId: number): unknown {
       // Quoter/pool: cố tình "revert" để UI đi nhánh "không có route".
       throw new Error("execution reverted");
     }
+    case "eth_sendRawTransaction":
+      // Tx "đã gửi" — hash giả cố định cho các spec theo dõi qua TxCenter.
+      return "0x" + "e2".repeat(32);
+    case "eth_getTransactionReceipt":
+      // Receipt thành công luôn: TxCenter patch bản ghi sang success và refetch.
+      return {
+        transactionHash: "0x" + "e2".repeat(32),
+        blockNumber: "0x1400001",
+        blockHash: `0x${"33".repeat(32)}`,
+        transactionIndex: "0x0",
+        from: "0x" + "11".repeat(20),
+        to: "0x" + "22".repeat(20),
+        cumulativeGasUsed: "0x5208",
+        gasUsed: "0x5208",
+        contractAddress: null,
+        logs: [],
+        logsBloom: `0x${"00".repeat(256)}`,
+        status: "0x1",
+        type: "0x2",
+        effectiveGasPrice: "0x3b9aca00",
+      };
     default:
       return undefined;
   }
@@ -353,6 +374,21 @@ export async function mockChain(page: Page, fallbackChainId = 1) {
       contentType: "application/json",
       headers: CORS_HEADERS,
       body: JSON.stringify({ message: "mock: không có route" }),
+    }),
+  );
+
+  // --- LI.FI /status (bridge cross-chain): trả DONE sau lần poll đầu ---
+  // bridge.spec.ts override route này khi cần kịch bản khác (failed/pending).
+  await page.route("**/li.quest/v1/status**", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      headers: CORS_HEADERS,
+      body: JSON.stringify({
+        status: "DONE",
+        substatus: "COMPLETED",
+        receiving: { txHash: "0x" + "ff".repeat(32), chainId: 42161 },
+      }),
     }),
   );
 

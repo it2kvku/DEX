@@ -44,6 +44,8 @@ interface LifiQuoteResponse {
     toAmountUSD?: string;
     gasCosts?: { amountUSD?: string }[];
     feeCosts?: { percentage?: string; included?: boolean }[];
+    /** Thời gian thực thi ước tính (giây) — có nghĩa với bridge cross-chain. */
+    executionDuration?: number;
   };
   includedSteps?: LifiStep[];
   transactionRequest?: {
@@ -76,7 +78,11 @@ function parseRoute(steps: LifiStep[]): RouteHop[] {
     }));
 }
 
-/** Lấy quote + calldata cho swap cùng chain. slippageBps: 50 = 0.5%. */
+/**
+ * Lấy quote + calldata. slippageBps: 50 = 0.5%.
+ * `toChainId` khác `chainId` = cross-chain bridge (LI.FI tự chọn tool:
+ * hyphen/across/stargate…); bằng nhau = swap cùng chain như cũ.
+ */
 export async function fetchLifiQuote(
   chainId: number,
   fromToken: Address,
@@ -84,12 +90,13 @@ export async function fetchLifiQuote(
   amountInWei: bigint,
   fromAddress: Address,
   slippageBps: number,
+  toChainId: number = chainId,
 ): Promise<SwapQuote> {
   if (!isSwapSupported(chainId)) throw new Error("Chain chưa hỗ trợ swap.");
 
   const params = new URLSearchParams({
     fromChain: String(chainId),
-    toChain: String(chainId),
+    toChain: String(toChainId),
     fromToken,
     toToken,
     fromAmount: amountInWei.toString(),
@@ -135,6 +142,8 @@ export async function fetchLifiQuote(
     // phí LP, phí integrator và sai số oracle, không phải price impact.
     priceImpactPct: null,
     lpFeePct: feePct > 0 ? feePct : null,
+    bridgeDurationSec: json.estimate?.executionDuration ?? null,
+    bridgeTool: json.tool ?? null,
     midRate: null,
     route:
       hops.length > 0
@@ -154,4 +163,80 @@ export async function fetchLifiQuote(
         : null,
     },
   };
+}
+
+/**
+ * Trạng thái cross-chain sau khi tx NGUỒN đã vào block. LI.FI theo dõi toàn bộ
+ * chuỗi step (bridge + swap đích) và trả tx hash phía nhận khi xong.
+ *
+ * Parse tách hàm thuần (parseLifiStatus) để unit test — shape /status đã đổi
+ * nhiều lần trong quá khứ nên mọi trường đều optional, không tin gì cả.
+ */
+export interface LifiBridgeStatus {
+  status: "pending" | "done" | "failed" | "unknown";
+  /** "REFUNDED", "COMPLETED"… — hiển thị cho người dùng khi thất bại. */
+  substatus: string | null;
+  /** Tx hash phía chain đích (có khi DONE hoặc gần DONE). */
+  receivingTxHash: Hex | null;
+  receivingChainId: number | null;
+}
+
+interface LifiStatusResp {
+  status?: string;
+  substatus?: string;
+  receiving?: { txHash?: string; chainId?: number } | null;
+}
+
+/** Chuẩn hóa response /status — hàm thuần, không gọi mạng. */
+export function parseLifiStatus(json: unknown): LifiBridgeStatus {
+  const j = (json ?? {}) as LifiStatusResp;
+  const raw = (j.status ?? "").toUpperCase();
+  let status: LifiBridgeStatus["status"];
+  if (raw === "DONE") status = "done";
+  else if (raw === "FAILED" || raw === "INVALID") status = "failed";
+  else if (raw === "PENDING" || raw === "NOT_FOUND" || raw === "WAITING")
+    status = "pending";
+  else status = "unknown";
+  return {
+    status,
+    substatus: j.substatus ?? null,
+    receivingTxHash: (j.receiving?.txHash as Hex | undefined) ?? null,
+    receivingChainId: j.receiving?.chainId ?? null,
+  };
+}
+
+/** Poll /status — cần bridge tool name lấy từ quote (`tool`). */
+export async function fetchLifiStatus(args: {
+  bridge: string;
+  fromChain: number;
+  toChain: number;
+  txHash: Hex;
+}): Promise<LifiBridgeStatus> {
+  const params = new URLSearchParams({
+    bridge: args.bridge,
+    fromChain: String(args.fromChain),
+    toChain: String(args.toChain),
+    txHash: args.txHash,
+  });
+  try {
+    const res = await fetch(`${LIFI_BASE}/status?${params.toString()}`);
+    if (!res.ok) {
+      // 4xx/5xx là lỗi hạ tầng, không phán quyết bridge thất bại.
+      return {
+        status: "unknown",
+        substatus: null,
+        receivingTxHash: null,
+        receivingChainId: null,
+      };
+    }
+    return parseLifiStatus(await res.json());
+  } catch {
+    // Mạng rớt (offline, DNS…) — cùng nguyên tắc: unknown, caller tự retry.
+    return {
+      status: "unknown",
+      substatus: null,
+      receivingTxHash: null,
+      receivingChainId: null,
+    };
+  }
 }

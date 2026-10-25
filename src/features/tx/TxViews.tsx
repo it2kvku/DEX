@@ -12,10 +12,10 @@ import {
   X,
 } from "lucide-react";
 import { useAccount, useChainId } from "wagmi";
-import { explorerTxUrl } from "@/lib/chains";
+import { explorerTxUrl, supportedChains } from "@/lib/chains";
 import { Spinner } from "@/components/ui";
 import { useTxCenter } from "./TxCenter";
-import type { TrackedTx, TxKind } from "./types";
+import { isFinal, type TrackedTx, type TxKind } from "./types";
 
 /**
  * Hai mặt hiển thị của Transaction Center:
@@ -31,6 +31,7 @@ const KIND_ICON: Record<TxKind, typeof ArrowLeftRight> = {
   approve: ShieldCheck,
   revoke: ShieldOff,
   send: SendIcon,
+  bridge: ArrowLeftRight,
 };
 
 /** Toast thông báo — tự tắt sau 6s, xếp chồng từ dưới lên. */
@@ -106,7 +107,8 @@ export function TxQueue() {
   );
   if (mine.length === 0) return null;
 
-  const hasFinished = mine.some((t) => t.status !== "pending");
+  // "receiving" (bridge đang chuyển) chưa phải xong — không hiện nút xoá.
+  const hasFinished = mine.some(isFinal);
 
   return (
     <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-3">
@@ -135,6 +137,12 @@ export function TxQueue() {
 function TxRow({ tx }: { tx: TrackedTx }) {
   const Icon = KIND_ICON[tx.kind];
   const url = explorerTxUrl(tx.chainId, tx.hash);
+  const destChain = tx.bridge
+    ? supportedChains.find((c) => c.id === tx.bridge!.toChainId)
+    : null;
+  const destUrl = tx.bridge?.receivingTxHash
+    ? explorerTxUrl(tx.bridge.toChainId, tx.bridge.receivingTxHash)
+    : null;
 
   const tone =
     tx.status === "success"
@@ -148,16 +156,18 @@ function TxRow({ tx }: { tx: TrackedTx }) {
   const statusText =
     tx.status === "pending"
       ? "Đang chờ xác nhận"
-      : tx.status === "success"
-        ? "Thành công"
-        : tx.status === "reverted"
-          ? "Bị revert"
-          : "Chưa xác nhận được";
+      : tx.status === "receiving"
+        ? `Đang chờ phía ${destChain?.name ?? "chain đích"}…`
+        : tx.status === "success"
+          ? "Thành công"
+          : tx.status === "reverted"
+            ? "Bị revert"
+            : "Chưa xác nhận được";
 
   return (
     <div className="flex items-center gap-2.5 rounded-xl px-2 py-2 transition-colors hover:bg-white/[0.04]">
       <span className={`shrink-0 ${tone}`}>
-        {tx.status === "pending" ? (
+        {tx.status === "pending" || tx.status === "receiving" ? (
           <Spinner className="!h-4 !w-4" />
         ) : (
           <Icon className="h-4 w-4" />
@@ -172,8 +182,21 @@ function TxRow({ tx }: { tx: TrackedTx }) {
           {tx.replacement === "repriced" && " (đã tăng gas)"}
           {tx.replacement === "cancelled" && " (đã huỷ trong ví)"}
           {tx.replacement === "replaced" && " (đã bị thay thế)"}
+          {tx.error && tx.status !== "receiving" && ` · ${tx.error}`}
         </p>
       </div>
+      {destUrl && (
+        <a
+          href={destUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="shrink-0 rounded-lg p-1 text-neutral-500 outline-none transition-colors hover:text-accent1 focus-visible:ring-2 focus-visible:ring-white/20"
+          aria-label="Xem tx phía đích trên explorer"
+          title="Tx phía chain đích"
+        >
+          <ExternalLink className="h-3.5 w-3.5 text-emerald-400/80" />
+        </a>
+      )}
       {url && (
         <a
           href={url}
