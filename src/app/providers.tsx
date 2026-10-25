@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { WagmiProvider } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RainbowKitProvider, darkTheme } from "@rainbow-me/rainbowkit";
@@ -23,6 +23,24 @@ export function Providers({ children }: { children: ReactNode }) {
         },
       }),
   );
+
+  // Sentry chỉ nạp khi có DSN — không có thì KHÔNG tốn byte nào thêm (dynamic
+  // import tách chunk riêng và không bao giờ được fetch). Lỗi production từ
+  // đây tự về Sentry thay vì vô hình (đã từng có bug GeckoTerminal đổi shape
+  // response chỉ phát hiện được bằng smoke test tay).
+  useEffect(() => {
+    const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
+    if (!dsn) return;
+    void import("@sentry/react").then((Sentry) => {
+      Sentry.init({
+        dsn,
+        // Chỉ bắt lỗi — không trace hiệu năng (tiết kiệm quota, đủ mục đích).
+        tracesSampleRate: 0,
+        // Môi trường: production vs preview deployment.
+        environment: process.env.NODE_ENV,
+      });
+    });
+  }, []);
 
   return (
     <WagmiProvider config={wagmiConfig}>

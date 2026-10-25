@@ -12,6 +12,10 @@ export default defineConfig({
       notFoundHandling: "none",
       runWorkerFirst: ["/*", "!/_next/static/*", "!/*/_next/static/*"],
     },
+    // Workers Logs: exception + console.log của Worker hiện trong dashboard
+    // (cf workers tail / observability) — lỗi phía server (vd RPC proxy)
+    // từ đây không còn vô hình.
+    observability: { enabled: true },
     env: {
       ASSETS: bindings.assets(),
       // Secret server-side cho RPC proxy (/rpc/{chainId}). KHÔNG dùng biến
