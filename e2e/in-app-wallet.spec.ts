@@ -18,6 +18,11 @@ const PASSWORD = "matkhau-test-123";
 test.beforeEach(async ({ page }) => {
   await mockChain(page);
   await page.goto("/app");
+  // Chờ hydration trước khi click tab — click vào nút SSR trước khi React
+  // gắn handler là click vô tác dụng (đã từng bắt gặp ở command palette).
+  await page.waitForFunction(() =>
+    (window as unknown as { __appReady?: boolean }).__appReady === true,
+  );
   await page.getByRole("button", { name: "Ví", exact: true }).first().click();
 });
 
@@ -135,6 +140,68 @@ test("xóa ví cần xác nhận hai bước", async ({ page }) => {
 
   // Về menu ban đầu: không còn vault nào.
   await expect(page.getByRole("button", { name: "Tạo ví mới" })).toBeVisible();
+});
+
+test("đa tài khoản: thêm tài khoản thứ 2 rồi chuyển qua lại", async ({
+  page,
+}) => {
+  await createWallet(page);
+
+  // Địa chỉ tài khoản 1 (chip trên navbar).
+  const chip = page.getByRole("button", { name: /^0x[0-9a-fA-F]/ });
+  const addr1 = (await chip.first().textContent()) ?? "";
+
+  // Thêm tài khoản 2 — danh sách có 2 dòng, dòng mới active.
+  await page.getByRole("button", { name: "＋ Thêm tài khoản" }).click();
+  const rows = page.getByRole("button", { name: /^Tài khoản \d/ });
+  await expect(rows).toHaveCount(2, { timeout: 15_000 });
+  await expect(page.getByText("Tài khoản 2")).toBeVisible();
+
+  // Navbar chip đổi sang địa chỉ khác — connector đã reconnect bằng account 2.
+  await expect(chip.first()).not.toHaveText(addr1, { timeout: 15_000 });
+
+  // Chuyển về tài khoản 1: địa chỉ trở lại như ban đầu.
+  await page.getByRole("button", { name: /^Tài khoản 1/ }).click();
+  await expect(chip.first()).toHaveText(addr1, { timeout: 15_000 });
+
+  // Sống sót qua reload: danh sách tài khoản vẫn 2 (persist trong vault).
+  await page.reload();
+  await page.getByRole("button", { name: "Ví", exact: true }).first().click();
+  await page.locator('input[type="password"]').fill(PASSWORD);
+  await page.getByRole("button", { name: "Mở khóa" }).click();
+  await expect(page.getByText("Ví in-app đã mở khóa")).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(rows).toHaveCount(2);
+});
+
+test("tự khóa khi rảnh (idle timeout)", async ({ page }) => {
+  // Timeout test mặc định 30s không đủ cho việc đợi timeout 60s thật.
+  test.setTimeout(150_000);
+  // Cấu hình 1 phút — giá trị nhỏ nhất có thể qua localStorage, set TRƯỚC
+  // khi app mount. Test này dài ~70s một cách cố ý: đợi thật hết timeout.
+  await page.addInitScript(() =>
+    localStorage.setItem("in-app-autolock-minutes", "1"),
+  );
+  await mockChain(page);
+  // beforeEach đã vào /app rồi, nhưng addInitScript chỉ chạy từ navigation
+  // KẾ TIẾP — reload để nó có tác dụng, rồi vào lại tab Ví (goto reset tab).
+  await page.goto("/app");
+  await page.waitForFunction(() =>
+    (window as unknown as { __appReady?: boolean }).__appReady === true,
+  );
+  await page.getByRole("button", { name: "Ví", exact: true }).first().click();
+  await createWallet(page);
+  await expect(page.getByText("Ví in-app đã mở khóa")).toBeVisible();
+  // (Không assert giá trị select: option "1 phút" không có trong danh sách
+  // 5/10/30/không — cấu hình 1 phút chỉ dành cho test. Kiểm chứng thật là
+  // hành vi tự khóa bên dưới.)
+
+  // Không tương tác gì trong 70 giây (timeout 60s + dư) → tự khóa.
+  await expect(page.getByRole("heading", { name: "Mở khóa ví in-app" })).toBeVisible({
+    timeout: 90_000,
+  });
+  await expect(page.getByText("Ví in-app đã mở khóa")).toBeHidden();
 });
 
 /** Tạo ví và đi hết luồng sao lưu — dùng cho các test cần ví sẵn sàng. */
