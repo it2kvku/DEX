@@ -410,6 +410,25 @@ export async function mockChain(page: Page, fallbackChainId = 1) {
     }),
   );
 
+  // --- GeckoTerminal OHLC: nến giả (trang token render nến thay line) ---
+  await page.route(/api\.geckoterminal\.com.*\/ohlcv/, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      headers: CORS_HEADERS,
+      body: JSON.stringify({
+        data: {
+          attributes: {
+            ohlcv_list: [
+              [1792800000, "100", "110", "95", "105", "10"],
+              [1792886400, "105", "120", "100", "115", "12"],
+            ],
+          },
+        },
+      }),
+    }),
+  );
+
   // --- GeckoTerminal (trang Khám phá + stats token): pool giả ổn định ---
   await page.route("**/api.geckoterminal.com/**", (route) =>
     route.fulfill({

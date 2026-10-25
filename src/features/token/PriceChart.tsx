@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
+import type { Candle } from "@/lib/geckoterminal";
 import type { ChartPoint, ChartRange } from "@/lib/marketData";
 import { formatTokenPrice, formatUsd } from "@/lib/format";
 import { Alert, Skeleton, Spinner } from "@/components/ui";
@@ -19,9 +20,15 @@ interface PriceChartProps {
   onRangeChange: (r: ChartRange) => void;
   currentPrice: number | null;
   rangeChange: number | null;
+  /**
+   * Nến OHLC (GeckoTerminal, theo pool chính của token) — có và đủ dữ liệu
+   * thì vẽ nến thay vì đường line. null/[] = fallback line DefiLlama.
+   */
+  candles?: Candle[] | null;
+  candlesLoading?: boolean;
 }
 
-/** Biểu đồ giá kiểu Uniswap: line + gradient, trục thời gian/giá, chọn khung. */
+/** Biểu đồ giá kiểu Uniswap: line + gradient (mặc định) hoặc nến OHLC. */
 export function PriceChart({
   points,
   loading,
@@ -30,6 +37,8 @@ export function PriceChart({
   onRangeChange,
   currentPrice,
   rangeChange,
+  candles,
+  candlesLoading,
 }: PriceChartProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [hover, setHover] = useState<{
@@ -37,29 +46,54 @@ export function PriceChart({
     y: number;
     point: ChartPoint;
   } | null>(null);
+  const [hoverCandle, setHoverCandle] = useState<Candle | null>(null);
+
+  const candleMode = !!candles && candles.length > 1;
 
   const plot = useMemo(() => buildPlot(points), [points]);
+  const cplot = useMemo(
+    () => (candleMode ? buildCandlePlot(candles!) : null),
+    [candleMode, candles],
+  );
+
   const up = (rangeChange ?? 0) >= 0;
-  const displayPrice = hover?.point.price ?? currentPrice;
-  const displayChange = hover
-    ? ((hover.point.price - plot.open) / plot.open) * 100
-    : rangeChange;
+  const lineUp = up;
+  const displayPrice = candleMode
+    ? (hoverCandle?.close ?? currentPrice)
+    : (hover?.point.price ?? currentPrice);
+  const displayChange = candleMode
+    ? hoverCandle
+      ? ((hoverCandle.close - hoverCandle.open) / hoverCandle.open) * 100
+      : rangeChange
+    : hover
+      ? ((hover.point.price - plot.open) / plot.open) * 100
+      : rangeChange;
 
   const onMove = useCallback(
     (e: React.MouseEvent<SVGSVGElement>) => {
-      if (!plot.pathPoints.length || !svgRef.current) return;
+      if (!svgRef.current) return;
       const rect = svgRef.current.getBoundingClientRect();
       const relX =
         ((e.clientX - rect.left) / rect.width) * CHART_W - PAD.left;
       const innerW = CHART_W - PAD.left - PAD.right;
-      const idx = Math.round(
-        Math.max(0, Math.min(1, relX / innerW)) * (plot.pathPoints.length - 1),
-      );
+      const frac = Math.max(0, Math.min(1, relX / innerW));
+
+      if (candleMode && cplot) {
+        const idx = Math.round(frac * (cplot.candles.length - 1));
+        const c = cplot.candles[idx];
+        if (!c) return;
+        setHoverCandle(c.candle);
+        setHover(null);
+        return;
+      }
+      if (!plot.pathPoints.length) return;
+      const idx = Math.round(frac * (plot.pathPoints.length - 1));
       const pt = plot.pathPoints[idx];
       if (!pt) return;
       setHover({ x: pt.x, y: pt.y, point: pt.source });
+      setHoverCandle(null);
     },
-    [plot.pathPoints],
+    [candleMode, cplot, plot.pathPoints],
   );
 
   return (
@@ -80,14 +114,29 @@ export function PriceChart({
             {(displayChange ?? 0) >= 0 ? "▲" : "▼"}{" "}
             {Math.abs(displayChange ?? 0).toFixed(2)}%
             <span className="ml-2 text-neutral-500">
-              {hover
-                ? new Date(hover.point.time).toLocaleString("vi-VN", {
-                    hour: "2-digit",
-                    minute: "2-digit",
+              {candleMode && hoverCandle ? (
+                <>
+                  O {formatTokenPrice(hoverCandle.open)} · H{" "}
+                  {formatTokenPrice(hoverCandle.high)} · L{" "}
+                  {formatTokenPrice(hoverCandle.low)} ·{" "}
+                  {new Date(hoverCandle.time).toLocaleString("vi-VN", {
                     day: "2-digit",
                     month: "short",
-                  })
-                : `trong ${rangeLabel(range)}`}
+                    ...(range === "1H" || range === "1D"
+                      ? { hour: "2-digit", minute: "2-digit" }
+                      : {}),
+                  })}
+                </>
+              ) : hover ? (
+                new Date(hover.point.time).toLocaleString("vi-VN", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  day: "2-digit",
+                  month: "short",
+                })
+              ) : (
+                `trong ${rangeLabel(range)}`
+              )}
             </span>
           </p>
         )}
@@ -118,7 +167,10 @@ export function PriceChart({
             viewBox={`0 0 ${CHART_W} ${CHART_H}`}
             className="h-[280px] w-full touch-none"
             onMouseMove={onMove}
-            onMouseLeave={() => setHover(null)}
+            onMouseLeave={() => {
+              setHover(null);
+              setHoverCandle(null);
+            }}
             role="img"
             aria-label="Biểu đồ giá token"
           >
@@ -126,19 +178,19 @@ export function PriceChart({
               <linearGradient id="chart-fill" x1="0" y1="0" x2="0" y2="1">
                 <stop
                   offset="0%"
-                  stopColor={up ? "#ff007a" : "#f43f5e"}
+                  stopColor={lineUp ? "#ff007a" : "#f43f5e"}
                   stopOpacity="0.35"
                 />
                 <stop
                   offset="100%"
-                  stopColor={up ? "#ff007a" : "#f43f5e"}
+                  stopColor={lineUp ? "#ff007a" : "#f43f5e"}
                   stopOpacity="0"
                 />
               </linearGradient>
             </defs>
 
-            {/* Grid ngang */}
-            {plot.yLabels.map((yl) => (
+            {/* Grid ngang — dùng scale của chế độ đang vẽ */}
+            {(cplot ?? plot).yLabels.map((yl: { y: number; value: number }) => (
               <g key={yl.y}>
                 <line
                   x1={PAD.left}
@@ -160,25 +212,50 @@ export function PriceChart({
               </g>
             ))}
 
-            {/* Vùng gradient dưới đường */}
-            {plot.areaPath && (
-              <path d={plot.areaPath} fill="url(#chart-fill)" />
-            )}
-
-            {/* Đường giá */}
-            {plot.linePath && (
-              <path
-                d={plot.linePath}
-                fill="none"
-                stroke={up ? "#ff007a" : "#f43f5e"}
-                strokeWidth="2.5"
-                strokeLinejoin="round"
-                strokeLinecap="round"
-              />
+            {cplot ? (
+              /* ===== Nến OHLC ===== */
+              cplot.candles.map((c) => (
+                <g key={c.candle.time}>
+                  <line
+                    x1={c.x}
+                    y1={c.yHigh}
+                    x2={c.x}
+                    y2={c.yLow}
+                    stroke={c.up ? "#10b981" : "#f43f5e"}
+                    strokeWidth="1"
+                  />
+                  <rect
+                    x={c.x - Math.max(1.5, c.w / 2 - 0.5)}
+                    y={Math.min(c.yOpen, c.yClose)}
+                    width={Math.max(3, c.w - 1)}
+                    height={Math.max(1, Math.abs(c.yClose - c.yOpen))}
+                    fill={c.up ? "#10b981" : "#f43f5e"}
+                    opacity="0.9"
+                  />
+                </g>
+              ))
+            ) : (
+              <>
+                {/* Vùng gradient dưới đường */}
+                {plot.areaPath && (
+                  <path d={plot.areaPath} fill="url(#chart-fill)" />
+                )}
+                {/* Đường giá */}
+                {plot.linePath && (
+                  <path
+                    d={plot.linePath}
+                    fill="none"
+                    stroke={lineUp ? "#ff007a" : "#f43f5e"}
+                    strokeWidth="2.5"
+                    strokeLinejoin="round"
+                    strokeLinecap="round"
+                  />
+                )}
+              </>
             )}
 
             {/* Crosshair hover */}
-            {hover && (
+            {hover && !cplot && (
               <>
                 <line
                   x1={hover.x}
@@ -191,7 +268,7 @@ export function PriceChart({
                   cx={hover.x}
                   cy={hover.y}
                   r="5"
-                  fill={up ? "#ff007a" : "#f43f5e"}
+                  fill={lineUp ? "#ff007a" : "#f43f5e"}
                   stroke="#0d0e12"
                   strokeWidth="2"
                 />
@@ -199,19 +276,27 @@ export function PriceChart({
             )}
 
             {/* Nhãn trục X */}
-            {plot.xLabels.map((xl) => (
-              <text
-                key={xl.x}
-                x={xl.x}
-                y={CHART_H - 6}
-                fill="#64748b"
-                fontSize="10"
-                textAnchor="middle"
-              >
-                {xl.label}
-              </text>
-            ))}
+            {(cplot ?? plot).xLabels.map(
+              (xl: { x: number; label: string }) => (
+                <text
+                  key={xl.x}
+                  x={xl.x}
+                  y={CHART_H - 6}
+                  fill="#64748b"
+                  fontSize="10"
+                  textAnchor="middle"
+                  fontFamily="monospace"
+                >
+                  {xl.label}
+                </text>
+              ),
+            )}
           </svg>
+        )}
+        {candlesLoading && !loading && points.length > 0 && (
+          <div className="absolute right-3 top-3">
+            <Spinner className="!h-4 !w-4" />
+          </div>
         )}
       </div>
 
@@ -232,7 +317,7 @@ export function PriceChart({
           </button>
         ))}
         <span className="ml-auto hidden text-xs text-neutral-600 sm:inline">
-          Nguồn: DefiLlama
+          Nguồn: {cplot ? "GeckoTerminal (nến)" : "DefiLlama"}
         </span>
       </div>
     </div>
@@ -322,6 +407,71 @@ function buildPlot(points: ChartPoint[]) {
     yLabels,
     xLabels,
   };
+}
+
+interface CandleBox {
+  x: number;
+  w: number;
+  yHigh: number;
+  yLow: number;
+  yOpen: number;
+  yClose: number;
+  up: boolean;
+  candle: Candle;
+}
+
+function buildCandlePlot(candles: Candle[]) {
+  if (candles.length < 2) return null;
+
+  let min = Math.min(...candles.map((c) => c.low));
+  let max = Math.max(...candles.map((c) => c.high));
+  const pad = (max - min) * 0.08 || max * 0.02 || 1;
+  min -= pad;
+  max += pad;
+
+  const innerW = CHART_W - PAD.left - PAD.right;
+  const innerH = CHART_H - PAD.top - PAD.bottom;
+  const yOf = (price: number) =>
+    PAD.top + (1 - (price - min) / (max - min)) * innerH;
+
+  const slot = innerW / candles.length;
+  const w = Math.max(2, Math.min(14, slot * 0.6));
+
+  const candlesBox: CandleBox[] = candles.map((c, i) => ({
+    x: PAD.left + (i + 0.5) * slot,
+    w,
+    yHigh: yOf(c.high),
+    yLow: yOf(c.low),
+    yOpen: yOf(c.open),
+    yClose: yOf(c.close),
+    up: c.close >= c.open,
+    candle: c,
+  }));
+
+  const yLabels = [0, 0.5, 1].map((t) => {
+    const value = min + (1 - t) * (max - min);
+    const y = PAD.top + t * innerH;
+    return { y, value };
+  });
+
+  const xCount = 5;
+  const xLabels = Array.from({ length: xCount }, (_, i) => {
+    const idx = Math.min(
+      candles.length - 1,
+      Math.round((i / (xCount - 1)) * (candles.length - 1)),
+    );
+    const c = candles[idx];
+    return {
+      x: candlesBox[idx].x,
+      label: new Date(c.time).toLocaleString("vi-VN", {
+        hour: "2-digit",
+        minute: "2-digit",
+        ...(candles.length > 48 ? { day: "2-digit", month: "short" } : {}),
+      }),
+    };
+  });
+
+  return { candles: candlesBox, yLabels, xLabels };
 }
 
 export function PriceChartSkeleton() {

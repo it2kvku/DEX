@@ -32,6 +32,7 @@ const KIND_ICON: Record<TxKind, typeof ArrowLeftRight> = {
   revoke: ShieldOff,
   send: SendIcon,
   bridge: ArrowLeftRight,
+  lp: ArrowLeftRight,
 };
 
 /** Toast thông báo — tự tắt sau 6s, xếp chồng từ dưới lên. */

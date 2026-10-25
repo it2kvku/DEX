@@ -25,6 +25,8 @@ import { WidgetErrorBoundary } from "@/components/WidgetErrorBoundary";
 import { Swap } from "@/features/swap/Swap";
 import type { TokenChoice } from "@/features/swap/TokenSelect";
 import { useTokenDetail } from "./useTokenDetail";
+import { useTokenExplore } from "./useTokenExplore";
+import { useTokenOhlc } from "./useTokenOhlc";
 import { useTokenChart } from "./useTokenChart";
 import { PriceChart, PriceChartSkeleton } from "./PriceChart";
 import { TokenExplore } from "./TokenExplore";
@@ -47,6 +49,9 @@ export function TokenPage({ addressParam }: { addressParam: string }) {
   } = useTokenDetail(addressParam);
 
   const chart = useTokenChart(detail?.llamaKey ?? null, range);
+  // Nguồn topPool cho nến OHLC — dùng chung query cache với TokenExplore.
+  const { stats } = useTokenExplore(chainId, detail, detail?.llamaKey ?? null);
+  const ohlc = useTokenOhlc(chainId, stats?.topPoolAddress ?? null, range);
 
   const rangeChange = useMemo(() => {
     if (chart.data && chart.data.openPrice > 0) {
@@ -252,6 +257,8 @@ export function TokenPage({ addressParam }: { addressParam: string }) {
                 <PriceChartSkeleton />
               ) : (
                 <PriceChart
+                  candles={ohlc.data ?? null}
+                  candlesLoading={ohlc.isLoading}
                   points={chart.data?.points ?? []}
                   loading={chart.isLoading || pricesLoading}
                   error={chart.isError}

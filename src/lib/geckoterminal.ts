@@ -371,3 +371,52 @@ function num(v: string | undefined | null): number | null {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 }
+
+/** Một nến OHLC (giá USD). */
+export interface Candle {
+  time: number; // ms
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
+/**
+ * Nến OHLC của một pool (GeckoTerminal). timeframe: day | hour | minute
+ * (aggregate 1). Trả [] khi pool không tồn tại / chain không hỗ trợ — caller
+ * tự fallback về đường line DefiLlama.
+ */
+export async function fetchOhlcv(
+  chainId: number,
+  poolAddress: string,
+  timeframe: "day" | "hour" | "minute",
+  limit = 120,
+): Promise<Candle[]> {
+  const network = geckoNetwork(chainId);
+  if (!network) return [];
+  try {
+    const json = await geckoFetch<{
+      data?: { attributes?: { ohlcv_list?: unknown[] } };
+    }>(
+      `/networks/${network}/pools/${poolAddress}/ohlcv/${timeframe}?aggregate=1&limit=${limit}`,
+    );
+    const list = json.data?.attributes?.ohlcv_list ?? [];
+    return list
+      .map((row): Candle | null => {
+        const r = row as [number, string, string, string, string, string?];
+        if (!Array.isArray(r) || r.length < 5) return null;
+        const [t, o, h, l, c] = r;
+        return {
+          time: t * 1000,
+          open: Number(o),
+          high: Number(h),
+          low: Number(l),
+          close: Number(c),
+        };
+      })
+      .filter((c): c is Candle => c !== null && c.close > 0)
+      .sort((a, b) => a.time - b.time);
+  } catch {
+    return [];
+  }
+}

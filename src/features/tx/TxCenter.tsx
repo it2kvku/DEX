@@ -53,6 +53,7 @@ const KIND_LABEL: Record<TxKind, string> = {
   revoke: "Thu hồi quyền",
   send: "Chuyển token",
   bridge: "Bridge",
+  lp: "LP",
 };
 
 /** Chu kỳ quét lại hàng đợi — để thử lại watcher đã chết vì lỗi RPC. */

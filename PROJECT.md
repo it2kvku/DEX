@@ -483,11 +483,24 @@ NonfungiblePositionManager — địa chỉ NPM verify on-chain bằng
 canonical chung, Base deploy riêng; Sepolia không bật vì NPM cũ không
 expose factory). Hiển thị pair, fee tier, range giá từ toán tick của
 engine (`lib/lp/range.ts`, series e^x fixed-point), trạng thái
-in/out-of-range từ slot0. V1 chỉ đọc — collect/rebalance là P7.
+in/out-of-range từ slot0. **P7: PHÍ chưa thu hồi** (feeGrowthInside delta
+theo công thức UniswapV3Pool — đã sửa điều kiện outsideLower/Upper bị đảo
+nhờ test) và **hai hành động GHI**: Thu hồi phí (collect) + Rút toàn bộ
+thanh khoản (decreaseLiquidity + collect trong một tx qua NPM.multicall).
+amount0Min/1Min cho decrease đến từ sqrt math theo đúng
+TickMath.getSqrtRatioAtTick (port chuỗi hằng số magic từ v3-core — ba hằng
+số cuối bị nhớ sai đã bị known-answer test bắt) × slippage 0.5% + deadline
+20 phút; preflight là eth_call thuần (owner-only, không cần override); tx
+đi qua TxCenter với kind `lp`.
 
 **Health check (P6)**: auxiliary Worker `elytramc-dex-health` cron
 10 phút — eth_blockNumber qua proxy từng chain, GET /app, LI.FI status;
 thất bại log vào Workers Logs + ping `HEALTH_PING_URL` (dead-man switch).
+
+**Biểu đồ nến (P7)**: khung 1H/1D/1W/1M/1Y/ALL của trang token vẽ nến
+OHLC theo pool chính (GeckoTerminal `/ohlcv`) khi token có pool — hover
+hiện O/H/L/C; không có pool hoặc API lỗi thì tự fallback về đường line
+DefiLlama như cũ.
 
 `Send.tsx` là luồng 3 bước `form → confirm → result`, có phân giải ENS và bảng
 chi tiết gas (gas limit, max fee dạng gwei, tổng phí quy đổi native + USD).

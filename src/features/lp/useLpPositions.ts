@@ -5,9 +5,11 @@ import { useAccount, useChainId, useReadContracts } from "wagmi";
 import type { Address } from "viem";
 import { erc20Abi } from "@/lib/abi/erc20";
 import {
+  poolFeeGrowthAbi,
   poolSlot0Abi,
   uniswapV3NpmAbi,
 } from "@/lib/abi/uniswapV3Npm";
+import { unclaimedFees } from "@/lib/lp/fees";
 import { rangeStatus, priceAtTick } from "@/lib/lp/range";
 import { computePoolAddress } from "@/features/swap/routing/pools";
 import { getV3ChainConfig } from "@/features/swap/routing/chains";
@@ -24,7 +26,7 @@ import { getV3ChainConfig } from "@/features/swap/routing/chains";
 const NPM_MAINNET = "0xC36442b4a4522E871399CD717aBDD847Ab11FE88" as Address;
 
 /** NPM theo chain — đã verify factory() khớp factory V3 của chain đó. */
-const NPM_BY_CHAIN: Partial<Record<number, Address>> = {
+export const NPM_BY_CHAIN: Partial<Record<number, Address>> = {
   1: NPM_MAINNET,
   137: NPM_MAINNET,
   42161: NPM_MAINNET,
@@ -52,6 +54,9 @@ export interface LpPosition {
   priceUpper: number;
   status: "in-range" | "below" | "above";
   poolAddress: Address;
+  /** Phí LP chưa thu hồi (raw units) — null khi chưa đọc đủ. */
+  fees0: bigint | null;
+  fees1: bigint | null;
 }
 
 export function useLpPositions() {
@@ -113,6 +118,8 @@ export function useLpPositions() {
           tickLower,
           tickUpper,
           liquidity,
+          feeGrowthInside0LastX128,
+          feeGrowthInside1LastX128,
         ] = r.result;
         const tokenId = tokenIds.data![i];
         const poolAddress = computePoolAddress(
@@ -130,6 +137,8 @@ export function useLpPositions() {
           tickUpper,
           liquidity,
           poolAddress,
+          feeGrowthInside0LastX128,
+          feeGrowthInside1LastX128,
         };
       })
       .filter((p): p is NonNullable<typeof p> => p !== null);
@@ -177,21 +186,100 @@ export function useLpPositions() {
     query: { enabled: uniquePools.length > 0 },
   });
 
+  // ---- Bước 4: fee growth (global + ticks hai mép) để tính phí chưa thu hồi ----
+  const uniquePairs = useMemo(
+    () =>
+      Array.from(
+        new Map(
+          positions.map((p) => [
+            `${p.tickLower}:${p.tickUpper}:${p.poolAddress}`,
+            { pool: p.poolAddress, tickLower: p.tickLower, tickUpper: p.tickUpper },
+          ]),
+        ).values(),
+      ),
+    [positions],
+  );
+  const feeGrowths = useReadContracts({
+    allowFailure: true,
+    contracts: uniquePairs.flatMap(({ pool, tickLower, tickUpper }) => [
+      { address: pool, abi: poolFeeGrowthAbi, functionName: "feeGrowthGlobal0X128" as const },
+      { address: pool, abi: poolFeeGrowthAbi, functionName: "feeGrowthGlobal1X128" as const },
+      { address: pool, abi: poolFeeGrowthAbi, functionName: "ticks" as const, args: [tickLower] },
+      { address: pool, abi: poolFeeGrowthAbi, functionName: "ticks" as const, args: [tickUpper] },
+    ]),
+    query: { enabled: uniquePairs.length > 0 },
+  });
+
+  const currentTicks = useMemo(() => {
+    const out: Record<string, number | null> = {};
+    uniquePools.forEach((pool, i) => {
+      const s = slot0s.data?.[i];
+      out[pool.toLowerCase()] = s?.status === "success" ? Number(s.result[1]) : null;
+    });
+    return out;
+  }, [slot0s.data, uniquePools]);
+
   const result = useMemo<LpPosition[]>(() => {
     if (positions.length === 0) return [];
     const symbolOf = (t: Address) =>
       String(symbols.data?.[uniqueTokens.indexOf(t)]?.result ?? "???");
     const decimalsOf = (t: Address) =>
       Number(decimals.data?.[uniqueTokens.indexOf(t)]?.result ?? 18);
-    const tickOf = (pool: Address) => {
-      const s = slot0s.data?.[uniquePools.indexOf(pool)];
-      return s?.status === "success" ? Number(s.result[1]) : null;
-    };
 
     return positions.map((p) => {
       const dec0 = decimalsOf(p.token0);
       const dec1 = decimalsOf(p.token1);
-      const currentTick = tickOf(p.poolAddress);
+      const currentTick = currentTicks[p.poolAddress.toLowerCase()] ?? null;
+
+      // Phí chưa thu hồi — thiếu read nào thì null (UI hiện "—").
+      let fees0: bigint | null = null;
+      let fees1: bigint | null = null;
+      if (currentTick !== null && feeGrowths.data) {
+        const idx = uniquePairs.findIndex(
+          (u) =>
+            u.pool === p.poolAddress &&
+            u.tickLower === p.tickLower &&
+            u.tickUpper === p.tickUpper,
+        );
+        const g0 = feeGrowths.data[idx * 4];
+        const g1 = feeGrowths.data[idx * 4 + 1];
+        const tl = feeGrowths.data[idx * 4 + 2];
+        const tu = feeGrowths.data[idx * 4 + 3];
+        if (
+          g0?.status === "success" &&
+          g1?.status === "success" &&
+          tl?.status === "success" &&
+          tu?.status === "success"
+        ) {
+          try {
+            // Contracts array trộn 2 shape (uint256 và tuple) — TS union,
+            // cast đúng shape theo thứ tự đã gửi.
+            const fees = unclaimedFees(
+              {
+                feeGrowthGlobal0X128: g0.result as bigint,
+                feeGrowthGlobal1X128: g1.result as bigint,
+                feeGrowthOutsideLower0X128: (tl.result as readonly [bigint, bigint, bigint, bigint, bigint, bigint, number, boolean])[2],
+                feeGrowthOutsideLower1X128: (tl.result as readonly [bigint, bigint, bigint, bigint, bigint, bigint, number, boolean])[3],
+                feeGrowthOutsideUpper0X128: (tu.result as readonly [bigint, bigint, bigint, bigint, bigint, bigint, number, boolean])[2],
+                feeGrowthOutsideUpper1X128: (tu.result as readonly [bigint, bigint, bigint, bigint, bigint, bigint, number, boolean])[3],
+              },
+              {
+                tickLower: p.tickLower,
+                tickUpper: p.tickUpper,
+                liquidity: p.liquidity,
+                feeGrowthInside0LastX128: p.feeGrowthInside0LastX128,
+                feeGrowthInside1LastX128: p.feeGrowthInside1LastX128,
+              },
+              currentTick,
+            );
+            fees0 = fees.fees0;
+            fees1 = fees.fees1;
+          } catch {
+            /* ticks() revert (mép range chưa init) — để null */
+          }
+        }
+      }
+
       return {
         ...p,
         symbol0: symbolOf(p.token0),
@@ -204,11 +292,24 @@ export function useLpPositions() {
           currentTick === null
             ? "in-range" // không đọc được slot0 — hiển thị trung tính
             : rangeStatus(p.tickLower, p.tickUpper, currentTick),
+        fees0,
+        fees1,
       };
     });
-  }, [positions, symbols.data, decimals.data, slot0s.data, uniqueTokens, uniquePools]);
+  }, [positions, symbols.data, decimals.data, currentTicks, feeGrowths.data, raw.data, uniquePairs]);
+
+  const refetch = () => {
+    balance.refetch();
+    tokenIds.refetch();
+    raw.refetch();
+    symbols.refetch();
+    decimals.refetch();
+    slot0s.refetch();
+    feeGrowths.refetch();
+  };
 
   return {
+    refetch,
     positions: result,
     total: Number(count),
     capped,

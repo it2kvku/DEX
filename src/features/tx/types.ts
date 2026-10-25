@@ -29,7 +29,7 @@ export type TxStatus =
   | "receiving";
 
 /** Loại giao dịch — quyết định icon và câu thông báo. */
-export type TxKind = "swap" | "approve" | "revoke" | "send" | "bridge";
+export type TxKind = "swap" | "approve" | "revoke" | "send" | "bridge" | "lp";
 
 /** Lý do một tx bị thay thế (người dùng speed-up/cancel trong ví). */
 export type TxReplacement = "repriced" | "cancelled" | "replaced";
