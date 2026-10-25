@@ -68,6 +68,9 @@ const AllowanceManager = dynamic(
     ),
   { loading: TabLoading },
 );
+const LpList = dynamic(() => import("@/features/lp/LpList").then((m) => m.LpList), {
+  loading: TabLoading,
+});
 
 const TABS: { id: WalletTab; label: string }[] = [
   { id: "assets", label: "Tài sản" },
@@ -77,6 +80,7 @@ const TABS: { id: WalletTab; label: string }[] = [
   { id: "history", label: "Lịch sử" },
   { id: "nft", label: "NFT" },
   { id: "approvals", label: "Quyền" },
+  { id: "lp", label: "LP" },
   { id: "wallet", label: "Ví" },
 ];
 
@@ -89,6 +93,7 @@ const SOURCE_LABEL: Record<WalletTab, string> = {
   history: "lịch sử (Etherscan)",
   nft: "NFT (Alchemy)",
   approvals: "quyền chi tiêu",
+  lp: "LP positions (Uniswap V3)",
   wallet: "ví in-app",
 };
 
@@ -240,6 +245,7 @@ export default function AppPage() {
                 {tab === "history" && <History />}
                 {tab === "nft" && <NftGallery />}
                 {tab === "approvals" && <AllowanceManager />}
+                {tab === "lp" && <LpList />}
               </WidgetErrorBoundary>
             )}
           </div>

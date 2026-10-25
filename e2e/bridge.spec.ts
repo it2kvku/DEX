@@ -76,8 +76,10 @@ test("nhãn nút chính đổi sang Bridge khi chọn chain đích khác", async
   // defaultTokens — uniswap list mock trả rỗng). exact:true để không bắt
   // nhầm nút disabled "Chọn token nhận".
   await page.getByRole("button", { name: "Chọn token", exact: true }).click();
-  await page.getByPlaceholder("Tìm token…").fill("USDT");
-  await page.getByRole("button", { name: /USDT/ }).first().click();
+  // Arbitrum defaultTokens: USDT đã nâng cấp trên-chain thành "USD₮0"
+  // (verify on-chain P6) — tìm đúng symbol hiện tại.
+  await page.getByPlaceholder("Tìm token…").fill("USD");
+  await page.getByRole("button", { name: /USD/ }).first().click();
 
   // Mock quote bridge thật (mock toàn cục trả 404): estimate + calldata đủ
   // shape để UI vào trạng thái hasQuote — nút chính phải hiện "Bridge".

@@ -456,8 +456,15 @@ invalidate và dòng đó tự biến mất.
 | Tab | Hook | Nguồn | Ghi chú |
 |---|---|---|---|
 | Tài sản | `useBalances` | RPC | native qua `useBalance`, ERC-20 batch qua `useReadContracts` |
-| | `usePrices` | CoinGecko `simple/price` | cache 60s, có `usd_24h_change` |
-| | `useTokenList` | `defaultTokens` + localStorage | key `custom-tokens:{chainId}` |
+| | `usePrices` | DefiLlama `coins.llama.fi` (current + historical) | không rate-limit như CoinGecko, có change 24h |
+| | `useTokenList` | `defaultTokens` + **Uniswap list runtime** (cache 24h) + localStorage | key `custom-tokens:{chainId}`, `uniswap-list:{chainId}` |
+
+`defaultTokens` P6: 11 token mainnet / 6 BSC / 6 Polygon / 7 Arbitrum /
+3 Base — **mọi địa chỉ + symbol + decimals đều verify on-chain** bằng
+`eth_call` trước khi commit (bắt được: WMATIC nay là WPOL, USDT
+Polygon/Arbitrum nâng cấp thành USDT0, CAKE symbol thật là "Cake"; loại
+MKR/Base DAI/AERO/GMX vì địa chỉ sai). Quy trình này BẮT BUỘC khi thêm
+token — sai một ký tự địa chỉ là mất tiền người dùng.
 | Lịch sử | `useHistory` | Etherscan V2 `txlist` / `tokentx` | chain 1/56/137/42161/11155111, 2 chế độ Coin / ERC-20 |
 | NFT | `useNfts` | Alchemy NFT v3 | chain 1/137/42161/11155111 (BSC không có) |
 | Gửi | `useGasEstimate` | RPC | EIP-1559, đệm gasLimit +15% |
@@ -469,6 +476,18 @@ invalidate và dòng đó tự biến mất.
 pool sang trang chi tiết token — token lạ tự đọc metadata on-chain nên
 không cần có sẵn trong danh sách. Tab Tài sản có ô tìm kiếm trên toàn bộ
 Uniswap list (mặc định chỉ hiện native + token có số dư + token tự import).
+
+**Tab LP (P6)**: position thanh khoản Uniswap V3 của ví (NFT) qua
+NonfungiblePositionManager — địa chỉ NPM verify on-chain bằng
+`factory()` đối chiếu factory từng chain (mainnet/Polygon/Arbitrum dùng
+canonical chung, Base deploy riêng; Sepolia không bật vì NPM cũ không
+expose factory). Hiển thị pair, fee tier, range giá từ toán tick của
+engine (`lib/lp/range.ts`, series e^x fixed-point), trạng thái
+in/out-of-range từ slot0. V1 chỉ đọc — collect/rebalance là P7.
+
+**Health check (P6)**: auxiliary Worker `elytramc-dex-health` cron
+10 phút — eth_blockNumber qua proxy từng chain, GET /app, LI.FI status;
+thất bại log vào Workers Logs + ping `HEALTH_PING_URL` (dead-man switch).
 
 `Send.tsx` là luồng 3 bước `form → confirm → result`, có phân giải ENS và bảng
 chi tiết gas (gas limit, max fee dạng gwei, tổng phí quy đổi native + USD).

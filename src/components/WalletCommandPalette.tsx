@@ -34,6 +34,7 @@ export type WalletTab =
   | "history"
   | "nft"
   | "approvals"
+  | "lp"
   | "wallet";
 
 interface PaletteItem {
@@ -55,6 +56,7 @@ const TAB_ITEMS: { tab: WalletTab; label: string; icon: PaletteItem["icon"] }[] 
     { tab: "history", label: "Lịch sử giao dịch", icon: Clock },
     { tab: "nft", label: "NFT", icon: ImageIcon },
     { tab: "approvals", label: "Quyền chi tiêu (allowance)", icon: ShieldOff },
+    { tab: "lp", label: "Thanh khoản (LP)", icon: Coins },
     { tab: "wallet", label: "Ví in-app", icon: KeyRound },
   ];
 

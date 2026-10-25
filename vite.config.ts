@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import vinext from "vinext";
 import { cloudflare } from "@cloudflare/vite-plugin";
+import healthWorkerConfig from "./health-worker.config.ts";
 
 // Build vinext (deploy Cloudflare Worker) LUÔN bật RPC proxy same-origin:
 // client gọi /rpc/{chainId}, Worker giữ Alchemy key trong secret server-side
@@ -18,6 +19,9 @@ export default defineConfig({
         name: "rsc",
         childEnvironments: ["ssr"],
       },
+      // Worker phụ: health-check cron (src/health-worker.ts) — deploy cùng
+      // bản chính, không route công khai.
+      auxiliaryWorkers: [{ config: healthWorkerConfig }],
     }),
   ],
 });
