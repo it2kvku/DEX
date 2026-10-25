@@ -100,3 +100,24 @@ test("network selector đổi được sang Sepolia", async ({ page }) => {
   // wagmi đổi chain trong store dù chưa có ví -> label navbar phải theo.
   await expect(trigger).toContainText("Sepolia");
 });
+
+test('breakpoint tab: md dùng pill nổi, không đè cụm nút phải', async ({
+  page,
+}) => {
+  // Regression P6: thêm tab LP làm dãy tab giữa dài ra — ở md (768-1023px)
+  // absolute centering đè lên nút ⌘K + ví. Giờ md dùng pill nổi dưới,
+  // tab giữa chỉ hiện từ lg.
+  await page.setViewportSize({ width: 768, height: 900 });
+  await page.goto('/app');
+  await page.waitForFunction(
+    () => (window as unknown as { __uiReady?: boolean }).__uiReady === true,
+  );
+
+  // Tab giữa (desktop) ẨN ở md...
+  const centerTabs = page.locator('header div.absolute');
+  await expect(centerTabs).toBeHidden();
+  // ...pill nổi DƯỚI hiện và cuộn được qua 9 tab.
+  const pill = page.locator('div.fixed.bottom-4');
+  await expect(pill).toBeVisible();
+  await expect(pill.getByRole('button', { name: 'LP', exact: true })).toBeVisible();
+});

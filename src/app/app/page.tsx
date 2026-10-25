@@ -180,7 +180,7 @@ export default function AppPage() {
           </div>
 
           {/* Tubelight tabs giữa header (desktop) */}
-          <div className="absolute left-1/2 top-1/2 hidden -translate-x-1/2 -translate-y-1/2 md:block">
+          <div className="absolute left-1/2 top-1/2 hidden -translate-x-1/2 -translate-y-1/2 lg:block">
             <TubelightTabs tab={tab} setTab={setTab} idPrefix="top" />
           </div>
 
@@ -200,7 +200,7 @@ export default function AppPage() {
       </motion.header>
 
       {/* Tabs cho mobile — pill tubelight nổi ở đáy màn hình */}
-      <div className="pointer-events-auto fixed bottom-4 left-1/2 z-50 -translate-x-1/2 md:hidden">
+      <div className="pointer-events-auto fixed bottom-4 left-1/2 z-50 -translate-x-1/2 lg:hidden">
         <TubelightTabs tab={tab} setTab={setTab} idPrefix="bottom" boxed />
       </div>
 
