@@ -121,14 +121,20 @@ export function useTokenDetail(addressParam: string) {
     ? prices.data?.[detail.llamaKey]
     : undefined;
 
+  // Token lạ mà đọc on-chain XONG vẫn không ra metadata → địa chỉ này không
+  // phải ERC-20 trên chain hiện tại (vd mở địa chỉ token mainnet khi đang ở
+  // Sepolia). Phải là trạng thái KẾT THÚC — không có nó thì trang kẹt ở
+  // "Đang đọc…" vĩnh viễn (bug thật đã bắt trên production).
+  const resolving = isUnknownErc20 && onchain.isLoading;
+  const notFound = !detail && !resolving;
+
   return {
     detail,
     priceUsd: priceInfo?.usd ?? null,
     change24h: priceInfo?.change24h,
     pricesLoading: prices.isLoading,
-    // Đang resolve on-chain thì chưa kết luận "không tìm thấy".
-    notFound: !detail && !isUnknownErc20 && !(isUnknownErc20 && onchain.isLoading),
-    resolving: isUnknownErc20 && onchain.isLoading,
+    notFound,
+    resolving,
     chartAvailable: !!detail?.llamaKey,
   };
 }

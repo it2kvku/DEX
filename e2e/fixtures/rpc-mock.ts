@@ -42,7 +42,24 @@ const SELECTOR = {
    * vì mock thiếu hàm, không phải app lỗi.
    */
   getEthBalance: "0x4d2301cc",
+  /** symbol() — token lạ trên trang token resolve metadata on-chain cần nó. */
+  symbol: "0x95d89b41",
 } as const;
+
+/** returnData của symbol() trả chuỗi "MOCK" — encode string động chuẩn ABI. */
+const MOCK_SYMBOL = encodeFunctionResult({
+  abi: [
+    {
+      type: "function",
+      name: "symbol",
+      stateMutability: "view",
+      inputs: [],
+      outputs: [{ type: "string" }],
+    },
+  ],
+  functionName: "symbol",
+  result: "MOCK",
+});
 
 const MULTICALL3 = "0xca11bde05977b3631167028862be2a173976ca11";
 
@@ -100,6 +117,7 @@ function answerCall(data: string): Hex | null {
   if (selector === SELECTOR.decimals) {
     return "0x0000000000000000000000000000000000000000000000000000000000000012" as Hex;
   }
+  if (selector === SELECTOR.symbol) return MOCK_SYMBOL;
   return null;
 }
 

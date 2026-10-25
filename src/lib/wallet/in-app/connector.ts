@@ -107,15 +107,39 @@ async function request({ method, params }: RequestArgs): Promise<unknown> {
       });
     }
 
-    // Mọi method đọc còn lại: proxy sang RPC của chain.
-    default:
-      return pub.request({ method, params } as Parameters<
-        typeof pub.request
-      >[0]);
+  // Mọi method đọc còn lại: proxy sang RPC của chain.
+      default:
+        return pub.request({ method, params } as Parameters<
+          typeof pub.request
+        >[0]);
+    }
   }
-}
 
-const provider = { request };
+  /**
+   * EIP-1193 yêu cầu provider có bộ method sự kiện (on/off/removeListener…)
+   * — wagmi bọc provider trong Proxy và truy cập chúng cả khi ví in-app
+   * không bao giờ phát sự kiện. Thiếu thì ném
+   * "'get' on proxy: property 'removeListener' is a read-only…" (uncaught
+   * trong promise, đã thấy trên production). Ví in-app không phát sự kiện
+   * nên các listener là no-op an toàn.
+   */
+  const listeners = new Set<(...args: unknown[]) => void>();
+
+  const provider = {
+    request,
+    on: (event: string, cb: (...args: unknown[]) => void) => {
+      listeners.add(cb);
+      return provider;
+    },
+    off: (event: string, cb: (...args: unknown[]) => void) => {
+      listeners.delete(cb);
+      return provider;
+    },
+    removeListener: (event: string, cb: (...args: unknown[]) => void) => {
+      listeners.delete(cb);
+      return provider;
+    },
+  };
 
 /** Tạo connector in-app wallet cho wagmi config. */
 export function inAppWalletConnector() {

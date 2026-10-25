@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { formatUnits, type Address } from "viem";
 import { erc20Abi } from "@/lib/abi/erc20";
-import { explorerAddressUrl } from "@/lib/chains";
+import { explorerAddressUrl, supportedChains } from "@/lib/chains";
 import { formatBalance, formatUsd, shortenAddress } from "@/lib/format";
 import type { ChartRange } from "@/lib/marketData";
 import { BoxesBackground } from "@/components/BoxesBackground";
@@ -87,17 +87,33 @@ export function TokenPage({ addressParam }: { addressParam: string }) {
     return (
       <TokenShell>
         <Card className="mx-auto max-w-lg space-y-4 text-center">
-          <p className="font-display text-lg font-semibold">Không tìm thấy token</p>
-          <p className="text-sm text-neutral-500">
-            Token này chưa có trong danh sách mạng hiện tại. Thử import token
-            hoặc đổi mạng.
+          <p className="font-display text-lg font-semibold">
+            Không đọc được token trên mạng này
           </p>
-          <Link
-            href="/app"
-            className="inline-block text-sm text-accent1 hover:brightness-125"
-          >
-            ← Về ví
-          </Link>
+          <p className="text-sm text-neutral-500">
+            Địa chỉ này không phải token ERC-20 trên{" "}
+            <span className="text-neutral-300">
+              {supportedChains.find((c) => c.id === chainId)?.name ??
+                `chain ${chainId}`}
+            </span>{" "}
+            — có thể nó là token của chain khác (vd mở link token mainnet khi ví
+            đang ở Sepolia) hoặc là địa chỉ ví thường. Thử đổi mạng ở góc trên
+            phải.
+          </p>
+          <div className="flex justify-center gap-2">
+            <Link
+              href="/app"
+              className="inline-block text-sm text-accent1 hover:brightness-125"
+            >
+              ← Về ví
+            </Link>
+            <Link
+              href="/app/explore"
+              className="inline-block text-sm text-neutral-400 hover:text-white"
+            >
+              Khám phá token
+            </Link>
+          </div>
         </Card>
       </TokenShell>
     );
