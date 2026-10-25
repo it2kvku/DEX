@@ -23,6 +23,7 @@ import { useAssets, type AssetRow } from "@/features/asset/useBalances";
 import { useTokenList } from "@/features/asset/useTokenList";
 import { ChainIcon } from "@/components/CryptoIcon";
 import { useTxCenter, useTrackedTx } from "@/features/tx/TxCenter";
+import { isFinal, type TrackedTx } from "@/features/tx/types";
 import { Alert, Button, Card, Label, Spinner } from "@/components/ui";
 import { Checkmark } from "@/components/anim/Checkmark";
 import { Reveal } from "@/components/anim/Reveal";
@@ -700,7 +701,10 @@ export function Swap({
       {errorText && <Alert variant="error">{errorText}</Alert>}
 
       {/* Kết quả preflight simulation */}
-      <SimulationNotice
+            {/* Tiến trình bridge live (nếu có lệnh bridge đang chạy của ví này) */}
+      <RunningBridge />
+
+<SimulationNotice
         state={
           !q
             ? "hidden"
@@ -1064,4 +1068,118 @@ function ChainPicker({
       )}
     </div>
   );
+}
+
+/**
+ * Tiến trình bridge ngay trong tab Swap — người dùng không phải đoán từ
+ * TxQueue: 3 bước (tx nguồn → đang bridge → chain đích). Đọc trực tiếp
+ * TxCenter nên sống sót khi đổi tab và cập nhật realtime khi /status DONE.
+ */
+function BridgeProgress({ tx }: { tx: TrackedTx }) {
+  const bridge = tx.bridge;
+  const destChain = bridge
+    ? supportedChains.find((c) => c.id === bridge.toChainId)
+    : null;
+
+  const step = tx.status === "pending" ? 1 : tx.status === "receiving" ? 2 : 3;
+  const failed = tx.status === "reverted" || tx.status === "dropped";
+
+  const Step = ({
+    n,
+    label,
+    href,
+  }: {
+    n: number;
+    label: string;
+    href?: string | null;
+  }) => {
+    const done = !failed && step > n;
+    const active = !failed && step === n;
+    return (
+      <div className="flex min-w-0 flex-1 flex-col items-center gap-1">
+        <span
+          className={`flex h-6 w-6 items-center justify-center rounded-full border text-[11px] font-semibold ${
+            done
+              ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+              : active
+                ? "border-accent1/50 bg-accent1/15 text-accent1"
+                : failed
+                  ? "border-rose-500/40 bg-rose-500/10 text-rose-300"
+                  : "border-white/10 bg-white/[0.04] text-neutral-600"
+          }`}
+          aria-current={active ? "step" : undefined}
+        >
+          {done ? "✓" : failed ? "✕" : n}
+        </span>
+        <span className="max-w-full truncate text-[10px] text-neutral-400">
+          {href ? (
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline decoration-dotted hover:text-accent1"
+            >
+              {label}
+            </a>
+          ) : (
+            label
+          )}
+        </span>
+      </div>
+    );
+  };
+
+  return (
+    <div
+      className="rounded-2xl border border-white/[0.07] bg-white/[0.03] px-4 py-3"
+      role="status"
+    >
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-xs font-medium text-neutral-300">
+          {failed
+            ? "Bridge không hoàn tất"
+            : step === 3
+              ? "Bridge hoàn tất"
+              : "Đang bridge…"}
+        </span>
+        {tx.status === "receiving" && <Spinner className="!h-3 !w-3" />}
+      </div>
+      <div className="flex items-start gap-1">
+        <Step
+          n={1}
+          label="Tx nguồn"
+          href={explorerTxUrl(tx.chainId, tx.hash)}
+        />
+        <span className="mt-3 h-px flex-1 bg-white/10" aria-hidden />
+        <Step n={2} label={`Sang ${destChain?.name ?? "chain đích"}`} />
+        <span className="mt-3 h-px flex-1 bg-white/10" aria-hidden />
+        <Step
+          n={3}
+          label="Chain đích"
+          href={
+            bridge?.receivingTxHash
+              ? explorerTxUrl(bridge.toChainId, bridge.receivingTxHash)
+              : null
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
+/** Lệnh bridge đang chạy mới nhất của ví hiện tại (mọi chain nguồn). */
+function RunningBridge() {
+  const { txs } = useTxCenter();
+  const { address } = useAccount();
+  const running = txs
+    .filter(
+      (t) =>
+        t.kind === "bridge" &&
+        !!address &&
+        t.from.toLowerCase() === address.toLowerCase(),
+    )
+    .filter((t) => !isFinal(t) || t.status === "success")
+    .slice(0, 1)[0];
+  if (!running) return null;
+  return <BridgeProgress tx={running} />;
 }

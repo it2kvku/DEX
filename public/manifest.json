@@ -1,0 +1,25 @@
+{
+  "name": "Web3 Wallet — Ví đa chain",
+  "short_name": "Web3 Wallet",
+  "description": "Ví Web3 non-custodial: quản lý tài sản, gửi nhận, swap, bridge và NFT trên 6 chain EVM.",
+  "start_url": "/app",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0a0a10",
+  "theme_color": "#0a0a10",
+  "lang": "vi",
+  "icons": [
+    {
+      "src": "/icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

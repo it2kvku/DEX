@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { WagmiProvider } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RainbowKitProvider, darkTheme } from "@rainbow-me/rainbowkit";
+import { MotionConfig } from "framer-motion";
 import { wagmiConfig } from "@/lib/wagmi";
 import { InAppWalletProvider } from "@/features/in-app-wallet/InAppWalletContext";
 import { TxCenterProvider } from "@/features/tx/TxCenter";
@@ -42,24 +43,38 @@ export function Providers({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  // Marker hydration TOÀN CỤC cho e2e: Providers mount trên mọi trang, nên
+  // đây là mốc đáng tin "React đã gắn listener" cho click đầu tiên — trên
+  // server lạnh (workerd), text SSR hiện ra TRƯỚC khi hydration xong và click
+  // vào lúc đó là click vô tác dụng (đã bắt trên navigation spec).
+  useEffect(() => {
+    (window as unknown as { __uiReady?: boolean }).__uiReady = true;
+  }, []);
+
   return (
     <WagmiProvider config={wagmiConfig}>
       <QueryClientProvider client={queryClient}>
-        <RainbowKitProvider
-          theme={darkTheme({
-            accentColor: "#ff007a",
-            accentColorForeground: "white",
-            borderRadius: "large",
-          })}
-          modalSize="compact"
-        >
-          <InAppWalletProvider>
-            {/* TxCenter nằm ngoài mọi tab để tx đang chờ không mất khi đổi tab.
-                Phải ở trong WagmiProvider + QueryClientProvider vì nó dùng
-                config để lấy client và invalidate query sau khi tx vào block. */}
-            <TxCenterProvider>{children}</TxCenterProvider>
-          </InAppWalletProvider>
-        </RainbowKitProvider>
+        {/* Tôn trọng prefers-reduced-motion: người dùng bật giảm chuyển động
+            trong OS thì mọi animation framer-motion (tab neon, palette, reveal)
+            tự chuyển sang chuyển tiếp tức thời — một dòng thay vì sửa từng
+            component. */}
+        <MotionConfig reducedMotion="user">
+          <RainbowKitProvider
+            theme={darkTheme({
+              accentColor: "#ff007a",
+              accentColorForeground: "white",
+              borderRadius: "large",
+            })}
+            modalSize="compact"
+          >
+            <InAppWalletProvider>
+              {/* TxCenter nằm ngoài mọi tab để tx đang chờ không mất khi đổi tab.
+                  Phải ở trong WagmiProvider + QueryClientProvider vì nó dùng
+                  config để lấy client và invalidate query sau khi tx vào block. */}
+              <TxCenterProvider>{children}</TxCenterProvider>
+            </InAppWalletProvider>
+          </RainbowKitProvider>
+        </MotionConfig>
       </QueryClientProvider>
     </WagmiProvider>
   );

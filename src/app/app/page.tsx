@@ -1,18 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { motion } from "framer-motion";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { useAccount, useChainId } from "wagmi";
 import { Wallet, Lock, Command } from "lucide-react";
 import { supportedChains } from "@/lib/chains";
-import { AssetList } from "@/features/asset/AssetList";
-import { Swap } from "@/features/swap/Swap";
-import { Send } from "@/features/transaction/Send";
-import { Receive } from "@/features/transaction/Receive";
-import { History } from "@/features/history/History";
-import { NftGallery } from "@/features/nft/NftGallery";
-import { AllowanceManager } from "@/features/allowance/AllowanceManager";
 import { InAppWalletPanel } from "@/features/in-app-wallet/InAppWalletPanel";
 import { TxNotices, TxQueue } from "@/features/tx/TxViews";
 import { NetworkSelector } from "@/components/NetworkSelector";
@@ -26,8 +20,54 @@ import {
   WalletCommandPalette,
   type WalletTab,
 } from "@/components/WalletCommandPalette";
-import { Alert } from "@/components/ui";
+import { Alert, Card, Spinner } from "@/components/ui";
 import { WidgetErrorBoundary } from "@/components/WidgetErrorBoundary";
+
+/**
+ * Nội dung từng tab nạp ĐỘNG (next/dynamic): tab nào chỉ tải khi người dùng
+ * mở tab đó lần đầu. Nhờ vậy /app initial JS giảm mạnh — wagmi/RainbowKit
+ * + shell vẫn shared, còn Swap/Send/QR/NFT/Allowance (kèm qrcode, etherscan
+ * client, geckoterminal) không còn nằm trong first load.
+ *
+ * Loading skeleton giữ layout ổn định khi chunk về.
+ */
+const TabLoading = () => (
+  <Card className="flex items-center gap-2 text-sm text-neutral-400">
+    <Spinner className="!h-4 !w-4" /> Đang tải tab…
+  </Card>
+);
+
+const AssetList = dynamic(
+  () => import("@/features/asset/AssetList").then((m) => m.AssetList),
+  { loading: TabLoading },
+);
+const Swap = dynamic(
+  () => import("@/features/swap/Swap").then((m) => m.Swap),
+  { loading: TabLoading },
+);
+const Send = dynamic(
+  () => import("@/features/transaction/Send").then((m) => m.Send),
+  { loading: TabLoading },
+);
+const Receive = dynamic(
+  () => import("@/features/transaction/Receive").then((m) => m.Receive),
+  { loading: TabLoading },
+);
+const History = dynamic(
+  () => import("@/features/history/History").then((m) => m.History),
+  { loading: TabLoading },
+);
+const NftGallery = dynamic(
+  () => import("@/features/nft/NftGallery").then((m) => m.NftGallery),
+  { loading: TabLoading },
+);
+const AllowanceManager = dynamic(
+  () =>
+    import("@/features/allowance/AllowanceManager").then(
+      (m) => m.AllowanceManager,
+    ),
+  { loading: TabLoading },
+);
 
 const TABS: { id: WalletTab; label: string }[] = [
   { id: "assets", label: "Tài sản" },

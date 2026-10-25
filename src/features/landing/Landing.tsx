@@ -56,7 +56,7 @@ export function Landing() {
               className="mb-4 inline-flex items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[0.04] px-3 py-1 text-xs text-neutral-300 backdrop-blur"
             >
               <Sparkles className="h-3 w-3 text-accent1" />
-              Non-custodial · 5 chain · DEX aggregator
+              Non-custodial · 6 chain · DEX engine
             </motion.p>
 
             <motion.h1

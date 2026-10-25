@@ -20,6 +20,7 @@ const grotesk = Space_Grotesk({
 export const metadata: Metadata = {
   title: "Web3 Wallet",
   description: "Ví Web3 non-custodial đa chain (EVM)",
+  manifest: "/manifest.json",
 };
 
 export default function RootLayout({
@@ -35,6 +36,15 @@ export default function RootLayout({
     >
       <body>
         <Providers>{children}</Providers>
+        {/* Service worker: chỉ cache static bất biến; RPC/HTML đi thẳng mạng
+            (xem public/sw.js — an toàn cho ví). Registration chạy sau paint
+            nên không chậm lượt tải đầu. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              'if("serviceWorker" in navigator)window.addEventListener("load",function(){navigator.serviceWorker.register("/sw.js").catch(function(){})})',
+          }}
+        />
       </body>
     </html>
   );

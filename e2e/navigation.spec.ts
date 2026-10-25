@@ -12,6 +12,13 @@ import { mockChain } from "./fixtures/rpc-mock";
  */
 test.beforeEach(async ({ page }) => {
   await mockChain(page);
+  await page.goto("/app");
+  // Chờ hydration toàn cục trước khi click bất kỳ nút nào: trên server lạnh
+  // (workerd vinext), text SSR hiện ra trước khi React gắn listener — click
+  // vào lúc đó là click vô tác dụng, test đỏ ngẫu nhiên.
+  await page.waitForFunction(
+    () => (window as unknown as { __uiReady?: boolean }).__uiReady === true,
+  );
 });
 
 test("landing hiển thị hero và điều hướng sang /app", async ({ page }) => {
@@ -20,6 +27,11 @@ test("landing hiển thị hero và điều hướng sang /app", async ({ page }
   await expect(
     page.getByRole("heading", { level: 1, name: /Ví Web3 đa chain/ }),
   ).toBeVisible();
+
+  // goto("/") là navigation mới — chờ hydration lại từ đầu trước khi click.
+  await page.waitForFunction(
+    () => (window as unknown as { __uiReady?: boolean }).__uiReady === true,
+  );
 
   // Nút trên navbar (không phải CTA trong hero) — lấy cái đầu tiên.
   await page.getByRole("button", { name: "Mở ứng dụng" }).first().click();
