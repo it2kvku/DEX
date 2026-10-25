@@ -170,7 +170,7 @@ export default function AppPage() {
         transition={{ duration: 0.5, ease: "easeOut" }}
         className="pointer-events-auto fixed inset-x-0 top-0 z-50 border-b border-white/[0.06] bg-[#0a0a10]/70 backdrop-blur-xl"
       >
-        <div className="relative mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-4 sm:px-6">
+        <div className="relative mx-auto flex h-16 w-full max-w-6xl items-center gap-2 px-4 sm:px-6">
           {/* Logo */}
           <div className="flex shrink-0 items-center gap-2.5">
             <BrandLogo height={30} priority />
@@ -179,8 +179,14 @@ export default function AppPage() {
             </span>
           </div>
 
-          {/* Tubelight tabs giữa header (desktop) */}
-          <div className="absolute left-1/2 top-1/2 hidden -translate-x-1/2 -translate-y-1/2 lg:block">
+          {/* Tubelight tabs giữa header (desktop). Flex-1 thay vì absolute
+              centering: tabs chiếm đúng khoảng trống giữa logo và cụm phải,
+              thiếu chỗ thì TỰ CUỘN — không bao giờ đè lên nút bên phải
+              (9 tab đã từng đè 2px ở 1280px với absolute centering). */}
+          <div
+            data-testid="top-tabs"
+            className="hidden min-w-0 flex-1 justify-center overflow-x-auto [scrollbar-width:none] lg:flex [&::-webkit-scrollbar]:hidden"
+          >
             <TubelightTabs tab={tab} setTab={setTab} idPrefix="top" />
           </div>
 

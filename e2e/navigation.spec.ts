@@ -114,7 +114,7 @@ test('breakpoint tab: md dùng pill nổi, không đè cụm nút phải', async
   );
 
   // Tab giữa (desktop) ẨN ở md...
-  const centerTabs = page.locator('header div.absolute');
+  const centerTabs = page.getByTestId('top-tabs');
   await expect(centerTabs).toBeHidden();
   // ...pill nổi DƯỚI hiện và cuộn được qua 9 tab.
   const pill = page.locator('div.fixed.bottom-4');
