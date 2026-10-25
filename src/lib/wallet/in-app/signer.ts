@@ -28,9 +28,12 @@ export function createMnemonic(): string {
   return generateMnemonic(english);
 }
 
-/** Lấy địa chỉ từ mnemonic mà không lộ key ra ngoài. */
-export function addressFromMnemonic(mnemonic: string): Address {
-  return mnemonicToAccount(mnemonic).address;
+/** Lấy địa chỉ từ mnemonic tại index HD cho trước (m/44'/60'/0'/0/{index}). */
+export function addressFromMnemonic(
+  mnemonic: string,
+  addressIndex = 0,
+): Address {
+  return mnemonicToAccount(mnemonic, { addressIndex }).address;
 }
 
 /** Mã hóa mnemonic để lưu (wrapper quanh keystore). */
@@ -49,9 +52,10 @@ export async function createInAppWalletClient(
   vault: EncryptedVault,
   password: string,
   chain: Chain,
+  addressIndex = 0,
 ): Promise<WalletClient> {
   const mnemonic = await decryptSeed(vault, password);
-  const account = mnemonicToAccount(mnemonic);
+  const account = mnemonicToAccount(mnemonic, { addressIndex });
   // mnemonic ra khỏi scope sau hàm này; account giữ private key trong bộ nhớ
   // của chính nó (cần thiết để ký), không expose ra state React.
 
@@ -77,13 +81,15 @@ export async function verifyPassword(
 }
 
 /**
- * Giải mã vault và trả về HDAccount (LocalAccount) để nạp vào connector.
- * Chỉ gọi khi đã xác thực mật khẩu; account chứa private key trong RAM.
+ * Giải mã vault và trả về HDAccount (LocalAccount) ở index cho trước để nạp
+ * vào connector. Chỉ gọi khi đã xác thực mật khẩu; account chứa private key
+ * trong RAM.
  */
 export async function accountFromVault(
   vault: EncryptedVault,
   password: string,
+  addressIndex = 0,
 ): Promise<HDAccount> {
   const mnemonic = await decryptSeed(vault, password);
-  return mnemonicToAccount(mnemonic);
+  return mnemonicToAccount(mnemonic, { addressIndex });
 }
